@@ -1,6 +1,10 @@
 \documentclass{article}
 \usepackage{hyperref}
 \usepackage[spanish]{babel}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{geometry}
+\geometry{margin=2.5cm}
 
 \begin{document}
 
@@ -14,17 +18,74 @@
 \subsection{Sitios Webs}
 
 \begin{itemize}
-    \item \href{https://huggingface.co/papers/trending}{Papers With Code – Datasets}
-    \item \href{https://www.openml.org/search?type=data&sort=runs&status=active&id=1489}{OpenML}
-    \item \href{https://www.kaggle.com/datasets}{Kaggle Datasets}
-    \item \href{https://archive.ics.uci.edu/}{UCI ML Repository}
-    \item \href{https://huggingface.co/datasets}{Hugging Face Datasets}
+    \item \href{https://paperswithcode.com/datasets?modality=tabular}{Papers With Code – Datasets} — Datasets tabulares con papers y métricas de referencia asociadas.
+    \item \href{https://www.openml.org/search?type=data&sort=runs&status=active&id=1489}{OpenML} — Repositorio de datasets para benchmarking, con resultados comparativos públicos.
+    \item \href{https://www.kaggle.com/datasets}{Kaggle Datasets} — Datasets de competencias con notebooks y baselines de referencia.
+    \item \href{https://archive.ics.uci.edu/}{UCI ML Repository} — Colección clásica de datasets para investigación en ML.
+    \item \href{https://huggingface.co/datasets}{Hugging Face Datasets} — Repositorio creciente con datasets vinculados a papers recientes.
+    % Ciencias naturales y medio ambiente
+    \item \href{https://earthdata.nasa.gov/}{NASA Earthdata} — Datos climáticos, atmosféricos y oceánicos de misiones de la NASA.
+    \item \href{https://www.ncei.noaa.gov/}{NOAA Climate Data} — Datos meteorológicos y climáticos históricos reales.
+    \item \href{https://opendata.cern.ch/}{CERN Open Data Portal} — Datos de física de partículas del acelerador LHC.
+    \item \href{https://www.pangaea.de/}{PANGAEA} — Datos de ciencias del mar y la tierra asociados a publicaciones científicas.
+    % Salud y biología
+    \item \href{https://physionet.org/}{PhysioNet} — Datos clínicos reales con papers asociados (UCI hospitalaria, señales fisiológicas).
+    \item \href{https://gdc.cancer.gov/}{NIH GDC} — Datos genómicos y clínicos de investigación oncológica.
+    \item \href{https://www.cdc.gov/brfss/}{CDC BRFSS} — Encuestas de salud poblacional de EE.UU., ampliamente usadas en ML clínico.
+    \item \href{https://www.who.int/data/gho}{Global Health Observatory – OMS} — Indicadores de salud pública por país.
+    % Ciencias sociales y economía
+    \item \href{https://ipums.org/}{IPUMS} — Microdatos censales de todo el mundo, incluyendo América Latina.
+    \item \href{https://ourworldindata.org/}{Our World in Data} — Datos globales sobre pobreza, energía, educación y salud con papers detrás.
+    \item \href{https://data.worldbank.org/}{World Bank Open Data} — Indicadores económicos y sociales por país.
+    % Gobierno y datos abiertos
+    \item \href{https://data.gov/}{Data.gov} — Más de 290k datasets de agencias federales de EE.UU.
+    \item \href{https://datos.gob.ar/}{datos.gob.ar} — Portal de datos abiertos del gobierno argentino.
+    \item \href{https://data.europa.eu/}{EU Open Data Portal} — Datos abiertos de la Unión Europea.
+    % Repositorios generales de investigación
+    \item \href{https://zenodo.org/}{Zenodo} — Repositorio del CERN: cada dataset tiene DOI y referencia directa a su paper.
+    \item \href{https://figshare.com/}{Figshare} — Datos publicados junto a artículos científicos de múltiples disciplinas.
+    \item \href{https://datadryad.org/}{Dryad} — Datasets de papers de ciencias biológicas y ambientales.
+    \item \href{https://dataverse.harvard.edu/}{Harvard Dataverse} — Repositorio de Harvard con datos de investigación de todas las disciplinas.
 \end{itemize}
+
+\newpage
 
 \subsection{Datasets Candidatos}
 
-\subsubsection*{}
+\begin{table}[h!]
+\centering
+\renewcommand{\arraystretch}{1.4}
+    \begin{tabular}{>{\bfseries}p{3.5cm} p{6cm} p{1cm} p{0.8cm} p{1.8cm} p{2cm}}
+    \toprule
+    Dataset & Descripción & $n$ & $m$ & Objetivo \\
+    \midrule
+    \href{https://www.openml.org/search?type=data&sort=runs&status=active&id=1489}{phenomene} 
+    & Sonidos nasales y orales. Amplitudes de armónicos.  
+    & 5404  & 5 & Clasificación Binaria  \\
+    \midrule
+    \href{https://www.openml.org/search?type=data&sort=runs&status=active&id=1466}{cardiotocography} 
+    & Cardiotocogramas (CTG) fetales para clasificación de patrón morfológico y de estado fetal. 
+    & 2126 & 36 & Clasificación Multiclase (10 o 3) \\
+    \midrule
+    \href{https://huggingface.co/datasets/FronkonGames/steam-games-dataset}{steam-games-dataset} 
+    & Información de juegos publicados en Steam 
+    & 124.146 & 41 & Clasificación / Regresión \\
+    \midrule
+    \href{https://www.openml.org/search?type=data&status=active&qualities.NumberOfInstances=between_10000_100000&id=1537}{volcanoes-c1\footnotemark}
+    & Imágenes de la superficie de Venus obtenidas de SAR (Synthetic Aperture Radar).
+    & 28.626 & -- & Clasificación Multiclase (4) \\
+    \midrule
+    \href{https://physionet.org/content/bidsleep-dataset/1.0.0/}{bidlab} 
+    & Registros de frecuencia cardíaca instantánea y ejes de acelerometría para identificación de fases de sueño. Datos de 47 adultos de 3--8 noches, \textbf{datos temporales}.
+    & -- & 4 & Clasificación Multiclase \\
+    \midrule
+    \href{https://physionet.org/content/hillel-yaffe-glaucoma-dataset/1.1.0/}{hillel-yaffe-glacuoma}
+    & Imágenes de fondos de ojos para detección de glaucomas. 
+    & 747 & -- & Clasificación Binaria \\
+    \bottomrule
+    \end{tabular}
+\end{table}
 
-
+\footnotetext{Hay varios experientos del mismo, buscar \texttt{volcanoes} en \href{https://www.openml.org/search?type=data&sort=runs&status=active&id=1489}{OpenML}, este es el de mayor cantidad de muestras}
 
 \end{document}

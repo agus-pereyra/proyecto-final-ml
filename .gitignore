@@ -7,3 +7,28 @@
 *.fdb_latexmk
 *.synctex.gz
 *.gz
+
+# Python
+**/__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg
+*.egg-info/
+dist/
+.eggs/
+.env
+.venv
+env/
+venv/
+*.ipynb_checkpoints/
+.ipynb_checkpoints/
+
+# Zips
+*.zip
+*.rar
+*.tar
+*.tar.gz
+*.tar.bz2
+*.7z
+*.gz
