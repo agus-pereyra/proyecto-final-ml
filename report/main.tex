@@ -1,0 +1,109 @@
+\documentclass[a4paper, 10pt]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{bookmark}
+\usepackage[spanish]{babel}
+\usepackage{graphicx}
+\usepackage{multicol}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{titling}
+\usepackage{hyperref}
+\usepackage[font=small, labelfont=bf]{caption}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{amssymb}
+\usepackage{amsmath}
+\usepackage{float}
+\usepackage{algorithm}
+\usepackage{booktabs}
+\usepackage{siunitx}
+\usepackage{relsize}
+\usepackage{array}
+\usepackage{graphicx}
+\usepackage{adjustbox}
+\usepackage{subcaption}
+
+\usepackage{tikz}
+\usetikzlibrary{shapes,positioning,calc,arrows.meta,babel}
+\usepackage[siunitx, american]{circuitikz}
+\newcommand{\instrumento}[3]{%
+  \draw (#1,#2) circle (0.4);
+  \node at (#1,#2) {$#3$};
+}
+
+\newcommand{\sectionrule}{\noindent\color{black!30}\rule{\linewidth}{0.6pt}}
+
+\begin{document}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% Título %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\begin{titlepage}
+    \centering
+    {\large \textbf{Universidad de San Andrés}, \textit{Buenos Aires, Argentina}} \\
+    \vspace{0.2cm}
+    \bigskip
+    \includegraphics[width=0.35\textwidth]{figures/udesa_logo.png} \\
+    \vspace{1cm}
+    {\large  I302 - Aprendizaje Automático y Aprendizaje Profundo} \\
+    \vspace{0.2cm}
+    \noindent\hrulefill\\
+    \vspace{0.5cm}
+    {\Large \textit{Proyecto Final}} \\
+    { \Huge \textbf{Título}:  \\
+    \textit{Subtítulo} \par}
+    \vspace{0.5cm}
+    \noindent\hrulefill\\
+    \vspace{1.5cm}
+    {\Large
+    Patruno, Agustín \\ 
+    {\large \texttt{\href{mailto:apereyra@udesa.edu.ar}{apereyra@udesa.edu.ar}}} \\
+    {\small \textit{Legajo}: 36631} \\ [0.3em]
+    \par
+    Pereyra, Agustín \\ 
+    {\large \texttt{\href{mailto:apatruno@udesa.edu.ar}{apatruno@udesa.edu.ar}}} \\   
+    {\small \textit{Legajo}: 36xxx} \\ [0.3em]
+    \par
+    }
+    \vfill
+    {\today \par}
+\end{titlepage}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% Abstract %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section*{Abstract}
+
+\vspace{10pt}
+
+\noindent\hrule
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% Sección 1 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Sección}
+   
+{\sectionrule}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% Sección 2 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Sección}
+
+
+    {\sectionrule}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% Conclusión %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Conclusión}
+
+
+\newpage
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% Referencias %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+\begin{thebibliography}{99}
+
+\bibitem{}
+Cita Bibliográfica.
+
+\end{thebibliography}
+
+\end{document}
