@@ -7,6 +7,7 @@
 *.fdb_latexmk
 *.synctex.gz
 *.gz
+*.out
 
 # Python
 **/__pycache__/
@@ -32,3 +33,6 @@ venv/
 *.tar.bz2
 *.7z
 *.gz
+
+# Temporalmente data
+/data/
