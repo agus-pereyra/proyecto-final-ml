@@ -17,6 +17,18 @@ if DATA_PATH is None:
         'Descargar y extraer en esa carpeta (ver README.md).'
     )
 
+PATIENCE_NUMBERS = [0,1,2,6,7,8,9,10,11,13,14,15,16,17,18,19,20,22,30,31,32,34,35,36,
+                    38,39,40,41,42,43,44,45,47,49,50,51,52,53,55,56,60,62,63,64,65,66,68]
+
+STAGES_LABELS = {
+    0 : 'Wake',
+    1 : 'N1',
+    2 : 'N2',
+    3 : 'N3',
+    4 : 'REM',
+    5 : 'Unkown'
+}
+
 class EDA:
     '''
     Clase de métodos estáticos para análisis y procesamiento de los datos
@@ -38,6 +50,44 @@ class EDA:
         rec_start = mat['recStart'][0]
         
         return hr, motion, dreem_labels, expert_labels, rec_start
+
+    @staticmethod
+    def class_distribution():
+        expert_counts = np.zeros(6, dtype=int)
+        dreem_counts = np.zeros(6, dtype=int)
+
+        for patient in PATIENCE_NUMBERS:
+            patient_dir = DATA_PATH / f'Bidslab{patient:02d}'
+            for night_dir in patient_dir.iterdir():
+                if not night_dir.is_dir():
+                    continue
+
+                mat = sio.loadmat(night_dir / 'labels.mat')
+                expert_labels = mat['expert_label'].flatten()
+                dreem_labels = mat['dreem_label'].flatten()
+
+                expert_counts += np.bincount(expert_labels, minlength=6)
+                dreem_counts += np.bincount(dreem_labels, minlength=6)
+
+        return {'expert': expert_counts, 'dreem': dreem_counts}
+
+    @staticmethod
+    def all_labels():
+        expert_labels = []
+        dreem_labels = []
+
+        for patient in PATIENCE_NUMBERS:
+            patient_dir = DATA_PATH / f'Bidslab{patient:02d}'
+            for night_dir in patient_dir.iterdir():
+                if not night_dir.is_dir():
+                    continue
+
+                mat = sio.loadmat(night_dir / 'labels.mat')
+                expert_labels.append(mat['expert_label'].flatten())
+                dreem_labels.append(mat['dreem_label'].flatten())
+
+        return np.concatenate(expert_labels), np.concatenate(dreem_labels)
+
     
 class DataSet(torch.utils.data.Dataset):
     '''

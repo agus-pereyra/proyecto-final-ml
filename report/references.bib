@@ -1,0 +1,70 @@
+@article{cohen1960coefficient,
+  author  = {Cohen, Jacob},
+  title   = {A Coefficient of Agreement for Nominal Scales},
+  journal = {Educational and Psychological Measurement},
+  year    = {1960},
+  volume  = {20},
+  number  = {1},
+  pages   = {37--46},
+  doi     = {10.1177/001316446002000104}
+}
+
+% 
+@article{landis1977measurement, 
+  author  = {Landis, J. Richard and Koch, Gary G.},
+  title   = {The Measurement of Observer Agreement for Categorical Data},
+  journal = {Biometrics},
+  year    = {1977},
+  volume  = {33},
+  number  = {1},
+  pages   = {159--174},
+  doi     = {10.2307/2529310}
+}
+
+@article{bidsleep,
+  author = {Song, Tzu-An},
+  title = {{A Multi-Night Instantaneous Heart Rate and Accelerometry Dataset with EEG Sleep Stage Labels}},
+  journal = {{PhysioNet}},
+  year = {2026},
+  month = may,
+  note = {Version 1.0.0},
+  doi = {10.13026/a0sy-7t69},
+  url = {https://doi.org/10.13026/a0sy-7t69}
+}
+
+@article{SLAMSS2023,
+    doi = {10.1371/journal.pone.0285703},
+    author = {Song, Tzu-An AND Chowdhury, Samadrita Roy AND Malekzadeh, Masoud AND Harrison, Stephanie AND Hoge, Terri Blackwell AND Redline, Susan AND Stone, Katie L. AND Saxena, Richa AND Purcell, Shaun M. AND Dutta, Joyita},
+    journal = {PLOS ONE},
+    publisher = {Public Library of Science},
+    title = {AI-Driven sleep staging from actigraphy and heart rate},
+    year = {2023},
+    month = {05},
+    volume = {18},
+    url = {https://doi.org/10.1371/journal.pone.0285703},
+    pages = {1-29},
+    abstract = {Sleep is an important indicator of a person’s health, and its accurate and cost-effective quantification is of great value in healthcare. The gold standard for sleep assessment and the clinical diagnosis of sleep disorders is polysomnography (PSG). However, PSG requires an overnight clinic visit and trained technicians to score the obtained multimodality data. Wrist-worn consumer devices, such as smartwatches, are a promising alternative to PSG because of their small form factor, continuous monitoring capability, and popularity. Unlike PSG, however, wearables-derived data are noisier and far less information-rich because of the fewer number of modalities and less accurate measurements due to their small form factor. Given these challenges, most consumer devices perform two-stage (i.e., sleep-wake) classification, which is inadequate for deep insights into a person’s sleep health. The challenging multi-class (three, four, or five-class) staging of sleep using data from wrist-worn wearables remains unresolved. The difference in the data quality between consumer-grade wearables and lab-grade clinical equipment is the motivation behind this study. In this paper, we present an artificial intelligence (AI) technique termed sequence-to-sequence LSTM for automated mobile sleep staging (SLAMSS), which can perform three-class (wake, NREM, REM) and four-class (wake, light, deep, REM) sleep classification from activity (i.e., wrist-accelerometry-derived locomotion) and two coarse heart rate measures—both of which can be reliably obtained from a consumer-grade wrist-wearable device. Our method relies on raw time-series datasets and obviates the need for manual feature selection. We validated our model using actigraphy and coarse heart rate data from two independent study populations: the Multi-Ethnic Study of Atherosclerosis (MESA; N = 808) cohort and the Osteoporotic Fractures in Men (MrOS; N = 817) cohort. SLAMSS achieves an overall accuracy of 79%, weighted F1 score of 0.80, 77% sensitivity, and 89% specificity for three-class sleep staging and an overall accuracy of 70-72%, weighted F1 score of 0.72-0.73, 64-66% sensitivity, and 89-90% specificity for four-class sleep staging in the MESA cohort. It yielded an overall accuracy of 77%, weighted F1 score of 0.77, 74% sensitivity, and 88% specificity for three-class sleep staging and an overall accuracy of 68-69%, weighted F1 score of 0.68-0.69, 60-63% sensitivity, and 88-89% specificity for four-class sleep staging in the MrOS cohort. These results were achieved with feature-poor inputs with a low temporal resolution. In addition, we extended our three-class staging model to an unrelated Apple Watch dataset. Importantly, SLAMSS predicts the duration of each sleep stage with high accuracy. This is especially significant for four-class sleep staging, where deep sleep is severely underrepresented. We show that, by appropriately choosing the loss function to address the inherent class imbalance, our method can accurately estimate deep sleep time (SLAMSS/MESA: 0.61±0.69 hours, PSG/MESA ground truth: 0.60±0.60 hours; SLAMSS/MrOS: 0.53±0.66 hours, PSG/MrOS ground truth: 0.55±0.57 hours;). Deep sleep quality and quantity are vital metrics and early indicators for a number of diseases. Our method, which enables accurate deep sleep estimation from wearables-derived data, is therefore promising for a variety of clinical applications requiring long-term deep sleep monitoring.},
+    number = {5},
+}
+
+@ARTICLE{schuster1997bilstm,
+  author={Schuster, M. and Paliwal, K.K.},
+  journal={IEEE Transactions on Signal Processing},
+  title={Bidirectional recurrent neural networks},
+  year={1997},
+  volume={45},
+  number={11},
+  pages={2673-2681},
+  keywords={Recurrent neural networks;Artificial neural networks;Training data;Databases;Probability;Shape;Parameter estimation;Speech recognition;Control systems;Telecommunication control},
+  doi={10.1109/78.650093}}
+
+@article{hochreiter1997lstm,
+  author  = {Hochreiter, Sepp and Schmidhuber, Jürgen},
+  title   = {Long Short-Term Memory},
+  journal = {Neural Computation},
+  year    = {1997},
+  volume  = {9},
+  number  = {8},
+  pages   = {1735--1780},
+  doi     = {10.1162/neco.1997.9.8.1735}
+}
