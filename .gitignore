@@ -34,5 +34,10 @@ venv/
 *.7z
 *.gz
 
-# Temporalmente data
-/data/
+# Data
+/data/*
+!/data/leer.txt
+
+# Claude Code
+.claude/
+CLAUDE.md

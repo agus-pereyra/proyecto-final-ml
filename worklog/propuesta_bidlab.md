@@ -2,14 +2,14 @@
 
 ## 1. Título del Proyecto
 
-Clasificador de Etapas del Sueño
+Clasificador de Etapas del Sueño sobre Señales Fisiológicas con RNNs
 
 ## 2. Conjunto de Datos
 
 **(a) Descripción del Conjunto de Datos**
 
 El dataset BIDSleep (PhysioNet, 2023) contiene registros polisomnográficos de 47 adultos sanos, con entre 3 a 7 noches de grabación por sujeto (un total de 253 noches). Para cada noche se registraron dos tipos de sañales temporales: (1) frecuencia cardíaca instantánea (IHR) y (2) acelerometría  en 3 ejes (x, y, z) obtenidas por un smartwatch de Apple (Apple Watch) mediante una aplicación desarrollada específicamente para BIDSleep . Las noches se segmentan en épocas de 30 segundos (estándar clínico AASM), resultando cada noche de aproximadamente 800 a 900 épocas.
-Provee 2 tipos de etiqueta por época: "dreem_label" es el asignado automáticamente por el dispositivo Dreem (headband, algoritmo automático), y "expert_label", asignado por un experto medicina del sueño (anotación manual), la cual sería utilizada como ground truth. Las etiquetas corresponden a 5 etapas del sueño: Wake (0), N1 (1), N2 (2), N3 (3), REM (4), Deconocido (5). 
+Provee 2 tipos de etiqueta por época: "dreem_label" es el asignado automáticamente por el dispositivo Dreem (headband, algoritmo automático), y "expert_label", asignado por un experto medicina del sueño (anotación manual), la cual sería utilizada como ground truth. Las etiquetas corresponden a 5 etapas del sueño: Wake (0), N1 (1), N2 (2), N3 (3), REM (4), Deconocido (5).
 
 **(b) Acceso al Conjunto de Datos**
 
