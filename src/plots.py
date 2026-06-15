@@ -32,10 +32,15 @@ def _draw_night_overview(night_data: pd.DataFrame, fontsize_scale: float = 1.0):
 
     fig, ax = plt.subplots(4, 1, figsize=(14, 7.6), sharex=True, gridspec_kw={'height_ratios': [3, 3, 0.6, 0.6]})
 
-    ax[0].plot(hr['Timestamp'], hr['hr'], color='tab:red')
-    ax[1].plot(motion['Timestamp'], motion['x'], label='x', color='tab:red')
-    ax[1].plot(motion['Timestamp'], motion['y'], label='y', color='tab:green')
-    ax[1].plot(motion['Timestamp'], motion['z'], label='z', color='tab:blue')
+    # eje x en horas, comenzando desde 0
+    t_min = min(hr['Timestamp'].min(), motion['Timestamp'].min())
+    hr_hours = (hr['Timestamp'] - t_min) / 3600
+    motion_hours = (motion['Timestamp'] - t_min) / 3600
+
+    ax[0].plot(hr_hours, hr['hr'], color='tab:red')
+    ax[1].plot(motion_hours, motion['x'], label='x', color='tab:red')
+    ax[1].plot(motion_hours, motion['y'], label='y', color='tab:green')
+    ax[1].plot(motion_hours, motion['z'], label='z', color='tab:blue')
 
     ax[0].set_ylabel('IHR [bpm]', fontsize=label_fs)
     ax[1].set_ylabel('Accelerometry [g]', fontsize=label_fs)
@@ -47,13 +52,13 @@ def _draw_night_overview(night_data: pd.DataFrame, fontsize_scale: float = 1.0):
     start = pd.Timestamp(str(rec_start), tz='America/New_York').timestamp()
 
     for i, label in enumerate(expert_labels):
-        t0 = start + i * epoch_len
-        t1 = t0 + epoch_len
+        t0 = (start + i * epoch_len - t_min) / 3600
+        t1 = t0 + epoch_len / 3600
         ax[2].axvspan(t0, t1, color=STAGE_COLORS[label], zorder=0)
 
     for i, label in enumerate(dreem_labels):
-        t0 = start + i * epoch_len
-        t1 = t0 + epoch_len
+        t0 = (start + i * epoch_len - t_min) / 3600
+        t1 = t0 + epoch_len / 3600
         ax[3].axvspan(t0, t1, color=STAGE_COLORS[label], zorder=0)
 
     ax[2].set_yticks([])
@@ -71,11 +76,13 @@ def _draw_night_overview(night_data: pd.DataFrame, fontsize_scale: float = 1.0):
     ax[0].grid(True, alpha=0.4, linestyle='--')
     ax[1].grid(True, alpha=0.4, linestyle='--')
 
-    ax[3].set_xlabel('Time [s]', fontsize=tick_fs)
+    ax[0].set_ylim(hr['hr'].min(), hr['hr'].max())
+    ax[1].set_ylim(motion[['x', 'y', 'z']].min().min(), motion[['x', 'y', 'z']].max().max())
 
-    t_min = min(hr['Timestamp'].min(), motion['Timestamp'].min())
+    ax[3].set_xlabel('Time [h]', fontsize=tick_fs)
+
     t_max = max(hr['Timestamp'].max(), motion['Timestamp'].max())
-    ax[3].set_xlim(t_min, t_max)
+    ax[3].set_xlim(0, (t_max - t_min) / 3600)
 
     plt.tight_layout()
 
