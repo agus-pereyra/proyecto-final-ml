@@ -23,14 +23,14 @@ STAGE_COLORS = {
 STAGE_NAMES = {0: 'Wake', 1: 'N1', 2: 'N2', 3: 'N3', 4: 'REM', 5: 'Unknown'}
 
 def _draw_night_overview(night_data: pd.DataFrame, fontsize_scale: float = 1.0):
-    hr, motion, _, expert_labels, rec_start = night_data
+    hr, motion, dreem_labels, expert_labels, rec_start = night_data
 
     label_fs = 14 * fontsize_scale
     tick_fs = 12 * fontsize_scale
     legend_fs = 14 * fontsize_scale
     stage_legend_fs = 12 * fontsize_scale
 
-    fig, ax = plt.subplots(3, 1, figsize=(14, 7), sharex=True, gridspec_kw={'height_ratios': [3, 3, 0.6]})
+    fig, ax = plt.subplots(4, 1, figsize=(14, 7.6), sharex=True, gridspec_kw={'height_ratios': [3, 3, 0.6, 0.6]})
 
     ax[0].plot(hr['Timestamp'], hr['hr'], color='tab:red')
     ax[1].plot(motion['Timestamp'], motion['x'], label='x', color='tab:red')
@@ -38,7 +38,7 @@ def _draw_night_overview(night_data: pd.DataFrame, fontsize_scale: float = 1.0):
     ax[1].plot(motion['Timestamp'], motion['z'], label='z', color='tab:blue')
 
     ax[0].set_ylabel('IHR [bpm]', fontsize=label_fs)
-    ax[1].set_ylabel(r'Accelerometry [g=9.8m/$s^2$]', fontsize=label_fs)
+    ax[1].set_ylabel('Accelerometry [g]', fontsize=label_fs)
     ax[0].tick_params(axis='both', labelsize=tick_fs)
     ax[1].tick_params(axis='both', labelsize=tick_fs)
 
@@ -51,22 +51,31 @@ def _draw_night_overview(night_data: pd.DataFrame, fontsize_scale: float = 1.0):
         t1 = t0 + epoch_len
         ax[2].axvspan(t0, t1, color=STAGE_COLORS[label], zorder=0)
 
+    for i, label in enumerate(dreem_labels):
+        t0 = start + i * epoch_len
+        t1 = t0 + epoch_len
+        ax[3].axvspan(t0, t1, color=STAGE_COLORS[label], zorder=0)
+
     ax[2].set_yticks([])
     ax[2].tick_params(axis='both', labelsize=tick_fs)
-    ax[2].set_ylabel('Stage', fontsize=tick_fs)
+    ax[2].set_ylabel('Expert', fontsize=tick_fs)
+
+    ax[3].set_yticks([])
+    ax[3].tick_params(axis='both', labelsize=tick_fs)
+    ax[3].set_ylabel('Dreem', fontsize=tick_fs)
 
     legend_patches = [mpatches.Patch(color=c, label=STAGE_NAMES[s]) for s, c in STAGE_COLORS.items()]
-    ax[2].legend(handles=legend_patches, loc='upper center', bbox_to_anchor=(0.5, -1.2), ncol=6, fontsize=stage_legend_fs)
+    ax[3].legend(handles=legend_patches, loc='upper center', bbox_to_anchor=(0.5, -1.6), ncol=6, fontsize=stage_legend_fs)
 
     ax[1].legend(loc='upper right', ncol=3, fontsize=legend_fs, handlelength=1, handletextpad=0.4)
     ax[0].grid(True, alpha=0.4, linestyle='--')
     ax[1].grid(True, alpha=0.4, linestyle='--')
 
-    ax[2].set_xlabel('Time [s]', fontsize=tick_fs)
+    ax[3].set_xlabel('Time [s]', fontsize=tick_fs)
 
     t_min = min(hr['Timestamp'].min(), motion['Timestamp'].min())
     t_max = max(hr['Timestamp'].max(), motion['Timestamp'].max())
-    ax[2].set_xlim(t_min, t_max)
+    ax[3].set_xlim(t_min, t_max)
 
     plt.tight_layout()
 

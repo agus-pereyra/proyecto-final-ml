@@ -88,7 +88,6 @@ class EDA:
 
         return np.concatenate(expert_labels), np.concatenate(dreem_labels)
 
-    
 class DataSet(torch.utils.data.Dataset):
     '''
     Clase para el manejo de splits/batches para el entrenamiento de redes
