@@ -19,9 +19,9 @@ wget -r -N -c -np https://physionet.org/files/bidsleep-dataset/1.0.0/
 
 En Windows, instalar wget previamente (por ejemplo con `winget install -e --id GNU.Wget2`) y luego ejecutar el mismo comando desde PowerShell o Git Bash.
 
-O directamente desde la web [https://physionet.org/content/bidsleep-dataset/1.0.0/#files-panel](https://physionet.org/content/bidsleep-dataset/1.0.0/#files-panel)
+O directamente desde la [web](https://physionet.org/content/bidsleep-dataset/1.0.0/#files-panel).
 
-2) Descomprimir la carpeta directamente en [data/](data/) de manera que quede estructurado de la siguiente manera
+1) Descomprimir la carpeta directamente en [data/](data/) de manera que quede estructurado de la siguiente manera
 
 ```text
 data/

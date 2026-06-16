@@ -230,6 +230,8 @@ def problematic_nights_overview(json_path: Path = None, ncols: int = 4):
         internal_gap_s = entry['internal_gap_s']
         leading_trunc_s = entry['leading_trunc_s']
         trailing_trunc_s = entry['trailing_trunc_s']
+        valid_start = entry['valid_start_s']
+        valid_end = entry['valid_end_s']
 
         hr, motion, _, expert_labels, rec_start = EDA.load_night(patient, night)
 
@@ -242,26 +244,35 @@ def problematic_nights_overview(json_path: Path = None, ncols: int = 4):
         label_span_s = len(expert_labels) * 30
         label_start_h = (start - t_min) / 3600
         label_end_h = (start + label_span_s - t_min) / 3600
-        valid_start = max(start, t_min)
-        valid_end = min(start + label_span_s, t_max)
+
+        valid_start_h = (valid_start - t_min) / 3600
+        valid_end_h = (valid_end - t_min) / 3600
+
+        def draw_windows(ax):
+            # ventana válida (lo que se conserva): verde visible + bordes marcados
+            ax.axvspan(valid_start_h, valid_end_h, color='mediumseagreen', alpha=0.22, zorder=0)
+            ax.axvline(valid_start_h, color='seagreen', linewidth=1.1, zorder=1)
+            ax.axvline(valid_end_h, color='seagreen', linewidth=1.1, zorder=1)
+            # extremos etiquetados que se truncan (labels sin señal): naranja
+            if valid_start_h > label_start_h:
+                ax.axvspan(label_start_h, valid_start_h, color='darkorange', alpha=0.3, zorder=1)
+            if label_end_h > valid_end_h:
+                ax.axvspan(valid_end_h, label_end_h, color='darkorange', alpha=0.3, zorder=1)
 
         # IHR
         ax_hr.plot(hr_hours, hr['hr'], color='steelblue', linewidth=0.5, zorder=2)
-        ax_hr.axvspan(label_start_h, label_end_h, color='lightgray', alpha=0.4, zorder=0)
+        draw_windows(ax_hr)
 
-        if leading_trunc_s > edge_trunc_threshold:
-            ax_hr.axvspan(label_start_h, (valid_start - t_min) / 3600, color='red', alpha=0.25, zorder=1)
-        if trailing_trunc_s > edge_trunc_threshold:
-            ax_hr.axvspan((valid_end - t_min) / 3600, label_end_h, color='red', alpha=0.25, zorder=1)
-        if internal_gap_s > internal_gap_threshold:
-            hr_ts = hr['Timestamp'].values
-            diffs = np.diff(hr_ts)
-            for i, d in enumerate(diffs):
-                if d > GAP_THRESHOLD_S:
-                    g0, g1 = hr_ts[i], hr_ts[i + 1]
-                    if g1 > valid_start and g0 < valid_end:
-                        ax_hr.axvspan((g0 - t_min) / 3600, (g1 - t_min) / 3600,
-                                      color='red', alpha=0.4, zorder=1)
+        # gaps internos dentro de la ventana válida (criterio de reparación/descarte): rojo
+        hr_ts = hr['Timestamp'].values
+        diffs = np.diff(hr_ts)
+        for i, d in enumerate(diffs):
+            if d > GAP_THRESHOLD_S:
+                g0, g1 = hr_ts[i], hr_ts[i + 1]
+                if g1 > valid_start and g0 < valid_end:
+                    ax_hr.axvspan((max(g0, valid_start) - t_min) / 3600,
+                                  (min(g1, valid_end) - t_min) / 3600,
+                                  color='red', alpha=0.45, zorder=2)
 
         # Acelerometría (desviación de la norma respecto a 1g)
         acc_norm = np.sqrt(motion['x']**2 + motion['y']**2 + motion['z']**2)
@@ -270,9 +281,9 @@ def problematic_nights_overview(json_path: Path = None, ncols: int = 4):
         ax_acc.axhline(ACC_TOL, color='red', linewidth=0.6, linestyle='--', zorder=3)
         ax_acc.fill_between(motion_hours, ACC_TOL, acc_dev,
                             where=(acc_dev > ACC_TOL), color='red', alpha=0.35, zorder=1)
-        ax_acc.axvspan(label_start_h, label_end_h, color='lightgray', alpha=0.4, zorder=0)
+        draw_windows(ax_acc)
 
-        # criterios fallidos
+        # criterios marcados (sólo se rotulan los significativos)
         failing = []
         if internal_gap_s > internal_gap_threshold:
             failing.append(f'gap={internal_gap_s/60:.0f}min')
