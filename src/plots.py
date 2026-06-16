@@ -200,9 +200,18 @@ def problematic_nights_overview(json_path: Path = None, ncols: int = 4):
     with open(json_path, encoding='utf-8') as f:
         data = json.load(f)
 
-    discarded = data['problematic']
     internal_gap_threshold = data['internal_gap_threshold_s']
     edge_trunc_threshold = data['edge_trunc_threshold_s']
+
+    # el overview muestra sólo las noches que pierden labels o tienen gaps
+    # (truncamiento de extremo significativo o gap interno); las de puro exceso
+    # de señal sobrante se recortan trivialmente y quedan sólo en el JSON.
+    discarded = [
+        e for e in data['problematic']
+        if e['leading_trunc_s'] > edge_trunc_threshold
+        or e['trailing_trunc_s'] > edge_trunc_threshold
+        or e['internal_gap_s'] > internal_gap_threshold
+    ]
 
     n = len(discarded)
     ncols = min(ncols, n)

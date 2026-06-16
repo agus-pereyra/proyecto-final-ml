@@ -27,7 +27,8 @@ PATIENCE_NUMBERS = [0,1,2,6,7,8,9,10,11,13,14,15,16,17,18,19,20,22,30,31,32,34,3
 GAP_THRESHOLD_S = 60.0           # gaps de ihr mayores a esto se detectan como discontinuidades
 ACC_TOL = 0.5                    # |sqrt(x²+y²+z²) - 1| > ACC_TOL indica acelerometría inválida
 INTERNAL_GAP_THRESHOLD_S = 600   # 10 min: máximo de gaps internos acumulados dentro de la ventana válida
-EDGE_TRUNC_THRESHOLD_S = 3600    # 1 hora: a partir de este truncamiento de extremo la noche se lista como problemática (igual se trunca siempre)
+EDGE_TRUNC_THRESHOLD_S = 3600    # 1 hora: truncamiento de extremo a partir del cual la noche se grafica en el overview
+ALIGN_TOL_S = 30                 # 1 epoch: por debajo de esto señal y labels se consideran ya alineados (no se lista como modificada)
 
 STAGES_LABELS = {
     0 : 'Wake',
@@ -209,8 +210,12 @@ class EDA:
                 valid_start = max(valid_start, float(out_left.max()))
 
             # diferencias al inicio/fin entre señal y labels (se truncan siempre)
+            # labels sin señal (se recortan las labels):
             leading_trunc_s = max(0.0, valid_start - start)
             trailing_trunc_s = max(0.0, label_end - valid_end)
+            # señal sin label, fuera de la ventana etiquetada (se recorta la señal):
+            head_excess_s = max(0.0, start - hr_start)
+            tail_excess_s = max(0.0, hr_end - label_end)
 
             # gaps de hr dentro de la ventana válida, recortando cada gap a esa ventana:
             # sólo se cuenta la porción que cae en [valid_start, valid_end].
@@ -262,6 +267,8 @@ class EDA:
                 'ihr_invalid_frac': ihr_invalid_frac,
                 'leading_trunc_s': leading_trunc_s,
                 'trailing_trunc_s': trailing_trunc_s,
+                'head_excess_s': head_excess_s,
+                'tail_excess_s': tail_excess_s,
                 'valid_start_s': valid_start,
                 'valid_end_s': valid_end,
                 'internal_gap_s': internal_gap_s,
@@ -281,48 +288,66 @@ class EDA:
 
     @staticmethod
     def problematic_nights(quality_df: pd.DataFrame,
-                           internal_gap_threshold: float = INTERNAL_GAP_THRESHOLD_S,
-                           edge_trunc_threshold: float = EDGE_TRUNC_THRESHOLD_S):
+                           align_tol: float = ALIGN_TOL_S,
+                           internal_gap_threshold: float = INTERNAL_GAP_THRESHOLD_S):
         '''
-        A partir del DataFrame devuelto por `quality_report`, identifica
-        noches problemáticas y deja el registro en `analysis/problematic_nights.json`.
+        A partir del DataFrame devuelto por `quality_report`, lista todas las
+        noches que requieren alguna modificación al construir el dataset y deja
+        el registro en `analysis/problematic_nights.json`. Sólo las noches ya
+        alineadas (señal y labels sobre el mismo período, dentro de `align_tol`)
+        quedan fuera.
 
-        Una noche se lista como problemática si tiene:
-        - `internal_gap_s > internal_gap_threshold`: gaps de señal dentro de
-          la ventana válida que rompen la continuidad temporal. Es el único
-          criterio de *descarte/reparación* (se decide al construir el dataset).
-        - `leading_trunc_s` o `trailing_trunc_s > edge_trunc_threshold`:
-          truncamiento de extremo significativo. NO se descarta: la solución
-          es recortar labels/señal a la ventana válida (no puede haber epochs
-          etiquetadas sin HR). Se listan para ilustrar esa modificación.
+        Cada noche se etiqueta con las modificaciones que necesita:
+        - `signal_excess`: hay señal fuera de la ventana etiquetada
+          (`head_excess_s`/`tail_excess_s`). Solución: recortar la señal.
+        - `label_trunc`: hay labels sin señal al inicio/fin
+          (`leading_trunc_s`/`trailing_trunc_s`). Solución: recortar las labels.
+        - `internal_gap`: hay gaps de señal dentro de la ventana válida
+          (`internal_gap_s > internal_gap_threshold`). Solución: descartar o
+          reparar la noche (se decide al construir el dataset).
 
-        Devuelve una lista de dicts {patient, night, internal_gap_s,
-        leading_trunc_s, trailing_trunc_s, valid_start_s, valid_end_s, hr_span_h}.
+        Todas las modificaciones se aplican en memoria, sin tocar los archivos.
+
+        Devuelve la lista de dicts (una por noche modificada).
         '''
-        bad = quality_df[
-            (quality_df['internal_gap_s'] > internal_gap_threshold) |
-            (quality_df['leading_trunc_s'] > edge_trunc_threshold) |
-            (quality_df['trailing_trunc_s'] > edge_trunc_threshold)
-        ]
-        nights = bad[['patient', 'night', 'internal_gap_s', 'leading_trunc_s', 'trailing_trunc_s',
-                      'valid_start_s', 'valid_end_s', 'hr_span_h']].to_dict('records')
+        q = quality_df
+        needs_signal_trim = (q['head_excess_s'] > align_tol) | (q['tail_excess_s'] > align_tol)
+        needs_label_trim = (q['leading_trunc_s'] > align_tol) | (q['trailing_trunc_s'] > align_tol)
+        needs_gap_fix = q['internal_gap_s'] > internal_gap_threshold
+        bad = q[needs_signal_trim | needs_label_trim | needs_gap_fix]
+
+        cols = ['patient', 'night', 'leading_trunc_s', 'trailing_trunc_s',
+                'head_excess_s', 'tail_excess_s', 'internal_gap_s',
+                'valid_start_s', 'valid_end_s', 'hr_span_h']
+        nights = bad[cols].to_dict('records')
+
+        def mods(d):
+            m = []
+            if d['head_excess_s'] > align_tol or d['tail_excess_s'] > align_tol:
+                m.append('signal_excess')
+            if d['leading_trunc_s'] > align_tol or d['trailing_trunc_s'] > align_tol:
+                m.append('label_trunc')
+            if d['internal_gap_s'] > internal_gap_threshold:
+                m.append('internal_gap')
+            return m
 
         with open('../analysis/problematic_nights.json', 'w', encoding='utf-8') as f:
             json.dump({
-                'criterion': 'internal_gap_s > internal_gap_threshold OR leading_trunc_s/trailing_trunc_s > edge_trunc_threshold',
+                'criterion': 'cualquier desalineacion senial/labels > align_tol, o internal_gap_s > internal_gap_threshold',
+                'align_tol_s': ALIGN_TOL_S,
                 'internal_gap_threshold_s': INTERNAL_GAP_THRESHOLD_S,
                 'edge_trunc_threshold_s': EDGE_TRUNC_THRESHOLD_S,
                 'description': (
-                    'Ventana valida = interseccion entre la ventana etiquetada '
-                    '[recStart, recStart + label_span_s] y el rango de senial continua de '
-                    'hr.csv (un gap que solo reanuda fuera del etiquetado se trata como borde, '
-                    'no como gap interno). leading_trunc_s/trailing_trunc_s son las diferencias '
-                    'entre labels y senial al inicio/fin; se truncan SIEMPRE al construir el '
-                    'dataset (recortando a la ventana valida), y se listan como problematicas '
-                    'cuando superan edge_trunc_threshold para ilustrar ese recorte. internal_gap_s '
-                    'es la suma de gaps de hr.csv (>60s) dentro de la ventana valida, recortados a '
-                    'esa ventana, y es el unico criterio de descarte/reparacion. hr_span_h es la '
-                    'duracion total de la senial de hr en horas (informativa, no criterio).'
+                    'Lista de noches que requieren modificacion al construir el dataset. '
+                    'Ventana valida = interseccion entre la ventana etiquetada [recStart, '
+                    'recStart + label_span_s] y el rango de senial continua de hr.csv (un gap '
+                    'que solo reanuda fuera del etiquetado se trata como borde, no como gap '
+                    'interno). Modificaciones: signal_excess = hay senial fuera del etiquetado '
+                    '(head/tail_excess), se recorta la senial; label_trunc = hay labels sin '
+                    'senial al inicio/fin (leading/trailing_trunc), se recortan las labels; '
+                    'internal_gap = gaps de hr dentro de la ventana valida (>internal_gap_threshold), '
+                    'se descarta o repara. Todo se aplica en memoria, sin tocar los archivos. '
+                    'hr_span_h es la duracion total de la senial de hr en horas (informativa).'
                 ),
                 'n_total_nights': len(quality_df),
                 'n_problematic': len(nights),
@@ -330,9 +355,12 @@ class EDA:
                     {
                         'patient': int(d['patient']),
                         'night': int(d['night']),
-                        'internal_gap_s': float(d['internal_gap_s']),
+                        'modifications': mods(d),
                         'leading_trunc_s': float(d['leading_trunc_s']),
                         'trailing_trunc_s': float(d['trailing_trunc_s']),
+                        'head_excess_s': float(d['head_excess_s']),
+                        'tail_excess_s': float(d['tail_excess_s']),
+                        'internal_gap_s': float(d['internal_gap_s']),
                         'valid_start_s': float(d['valid_start_s']),
                         'valid_end_s': float(d['valid_end_s']),
                         'hr_span_h': float(d['hr_span_h']),
