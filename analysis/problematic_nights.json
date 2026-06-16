@@ -1,0 +1,266 @@
+{
+  "criterion": "internal_gap_s > internal_gap_threshold OR leading_trunc_s/trailing_trunc_s > edge_trunc_threshold",
+  "internal_gap_threshold_s": 600,
+  "edge_trunc_threshold_s": 3600,
+  "description": "Ventana valida = interseccion entre la ventana etiquetada [recStart, recStart + label_span_s] y el rango de senial de hr.csv. leading_trunc_s/trailing_trunc_s son las diferencias entre labels y senial al inicio/fin (si son menores al umbral, se truncan al construir el dataset en vez de descartar la noche). internal_gap_s es la suma de gaps de hr.csv (>60s) dentro de la ventana valida. hr_span_h es la duracion total de la senial de hr en horas (informativa, no criterio).",
+  "n_total_nights": 253,
+  "n_problematic": 32,
+  "problematic": [
+    {
+      "patient": 1,
+      "night": 3,
+      "internal_gap_s": 0.0,
+      "leading_trunc_s": 8.999113082885742,
+      "trailing_trunc_s": 9234.500886917114,
+      "hr_span_h": 5.0656944444444445
+    },
+    {
+      "patient": 2,
+      "night": 1,
+      "internal_gap_s": 0.0,
+      "leading_trunc_s": 0.0,
+      "trailing_trunc_s": 4497.390522241592,
+      "hr_span_h": 7.235972222288449
+    },
+    {
+      "patient": 14,
+      "night": 4,
+      "internal_gap_s": 0.0,
+      "leading_trunc_s": 7328.449984073639,
+      "trailing_trunc_s": 32.551342487335205,
+      "hr_span_h": 5.546944075955285
+    },
+    {
+      "patient": 18,
+      "night": 2,
+      "internal_gap_s": 0.0,
+      "leading_trunc_s": 0.0,
+      "trailing_trunc_s": 3738.1519804000854,
+      "hr_span_h": 5.6910723283555775
+    },
+    {
+      "patient": 18,
+      "night": 6,
+      "internal_gap_s": 0.0,
+      "leading_trunc_s": 40.511489391326904,
+      "trailing_trunc_s": 4233.6135103702545,
+      "hr_span_h": 6.012743055621783
+    },
+    {
+      "patient": 20,
+      "night": 1,
+      "internal_gap_s": 3352.0312848091125,
+      "leading_trunc_s": 0.0,
+      "trailing_trunc_s": 0.0,
+      "hr_span_h": 57.275238842301896
+    },
+    {
+      "patient": 30,
+      "night": 1,
+      "internal_gap_s": 12917.073750257492,
+      "leading_trunc_s": 116.99546766281128,
+      "trailing_trunc_s": 0.0,
+      "hr_span_h": 31.66094442970223
+    },
+    {
+      "patient": 30,
+      "night": 6,
+      "internal_gap_s": 3207.3690626621246,
+      "leading_trunc_s": 0.0,
+      "trailing_trunc_s": 0.0,
+      "hr_span_h": 29.762623304393557
+    },
+    {
+      "patient": 31,
+      "night": 1,
+      "internal_gap_s": 3985.914480447769,
+      "leading_trunc_s": 73.33600234985352,
+      "trailing_trunc_s": 0.0,
+      "hr_span_h": 31.79598791645633
+    },
+    {
+      "patient": 31,
+      "night": 3,
+      "internal_gap_s": 8233.52011346817,
+      "leading_trunc_s": 46.50998544692993,
+      "trailing_trunc_s": 0.0,
+      "hr_span_h": 101.58595483548112
+    },
+    {
+      "patient": 31,
+      "night": 4,
+      "internal_gap_s": 4068.466479063034,
+      "leading_trunc_s": 38.78715109825134,
+      "trailing_trunc_s": 0.0,
+      "hr_span_h": 54.58143340057797
+    },
+    {
+      "patient": 31,
+      "night": 5,
+      "internal_gap_s": 0.0,
+      "leading_trunc_s": 0.0,
+      "trailing_trunc_s": 4069.05260682106,
+      "hr_span_h": 6.257934460904863
+    },
+    {
+      "patient": 34,
+      "night": 1,
+      "internal_gap_s": 0.0,
+      "leading_trunc_s": 0.0,
+      "trailing_trunc_s": 16348.774374008179,
+      "hr_span_h": 6.652840496102969
+    },
+    {
+      "patient": 34,
+      "night": 2,
+      "internal_gap_s": 0.0,
+      "leading_trunc_s": 0.0,
+      "trailing_trunc_s": 5219.43572640419,
+      "hr_span_h": 9.07179207113054
+    },
+    {
+      "patient": 41,
+      "night": 3,
+      "internal_gap_s": 42087.687906980515,
+      "leading_trunc_s": 0.0,
+      "trailing_trunc_s": 0.0,
+      "hr_span_h": 34.704990135232606
+    },
+    {
+      "patient": 41,
+      "night": 5,
+      "internal_gap_s": 11581.792596578598,
+      "leading_trunc_s": 0.0,
+      "trailing_trunc_s": 0.0,
+      "hr_span_h": 30.309998117950226
+    },
+    {
+      "patient": 41,
+      "night": 6,
+      "internal_gap_s": 0.0,
+      "leading_trunc_s": 24.964887619018555,
+      "trailing_trunc_s": 3674.9361107349396,
+      "hr_span_h": 7.272249722679456
+    },
+    {
+      "patient": 41,
+      "night": 7,
+      "internal_gap_s": 0.0,
+      "leading_trunc_s": 61.497360706329346,
+      "trailing_trunc_s": 3726.870370864868,
+      "hr_span_h": 9.097675630119111
+    },
+    {
+      "patient": 42,
+      "night": 4,
+      "internal_gap_s": 1757.3135783672333,
+      "leading_trunc_s": 115.74079275131226,
+      "trailing_trunc_s": 0.0,
+      "hr_span_h": 29.591598052448695
+    },
+    {
+      "patient": 43,
+      "night": 1,
+      "internal_gap_s": 4155.568557739258,
+      "leading_trunc_s": 0.0,
+      "trailing_trunc_s": 0.0,
+      "hr_span_h": 32.21542424870862
+    },
+    {
+      "patient": 43,
+      "night": 2,
+      "internal_gap_s": 0.0,
+      "leading_trunc_s": 21.93765950202942,
+      "trailing_trunc_s": 5771.628328800201,
+      "hr_span_h": 8.557342781027158
+    },
+    {
+      "patient": 43,
+      "night": 3,
+      "internal_gap_s": 21367.00075984001,
+      "leading_trunc_s": 21.811741828918457,
+      "trailing_trunc_s": 0.0,
+      "hr_span_h": 30.1784889084763
+    },
+    {
+      "patient": 43,
+      "night": 4,
+      "internal_gap_s": 0.0,
+      "leading_trunc_s": 66.82254362106323,
+      "trailing_trunc_s": 3664.5854110717773,
+      "hr_span_h": 7.5551644570297665
+    },
+    {
+      "patient": 44,
+      "night": 5,
+      "internal_gap_s": 512.0,
+      "leading_trunc_s": 21.434764623641968,
+      "trailing_trunc_s": 3772.1149458885193,
+      "hr_span_h": 6.296236191524399
+    },
+    {
+      "patient": 44,
+      "night": 6,
+      "internal_gap_s": 0.0,
+      "leading_trunc_s": 115.2916738986969,
+      "trailing_trunc_s": 7577.860340356827,
+      "hr_span_h": 8.038013329373465
+    },
+    {
+      "patient": 45,
+      "night": 2,
+      "internal_gap_s": 0.0,
+      "leading_trunc_s": 53.953153133392334,
+      "trailing_trunc_s": 3713.343027114868,
+      "hr_span_h": 6.2118621721532605
+    },
+    {
+      "patient": 45,
+      "night": 4,
+      "internal_gap_s": 0.0,
+      "leading_trunc_s": 84.75032925605774,
+      "trailing_trunc_s": 3713.1102709770203,
+      "hr_span_h": 6.461705388824145
+    },
+    {
+      "patient": 45,
+      "night": 6,
+      "internal_gap_s": 0.0,
+      "leading_trunc_s": 59.90327215194702,
+      "trailing_trunc_s": 3719.5682566165924,
+      "hr_span_h": 5.675146797564294
+    },
+    {
+      "patient": 52,
+      "night": 4,
+      "internal_gap_s": 0.0,
+      "leading_trunc_s": 0.0,
+      "trailing_trunc_s": 3702.5008974075317,
+      "hr_span_h": 6.768784722222223
+    },
+    {
+      "patient": 52,
+      "night": 6,
+      "internal_gap_s": 0.0,
+      "leading_trunc_s": 32.30470418930054,
+      "trailing_trunc_s": 3733.320295572281,
+      "hr_span_h": 6.978993055621783
+    },
+    {
+      "patient": 53,
+      "night": 3,
+      "internal_gap_s": 0.0,
+      "leading_trunc_s": 0.0,
+      "trailing_trunc_s": 3698.8554162979126,
+      "hr_span_h": 7.657239583333333
+    },
+    {
+      "patient": 65,
+      "night": 1,
+      "internal_gap_s": 26688.83354330063,
+      "leading_trunc_s": 124.11508011817932,
+      "trailing_trunc_s": 0.0,
+      "hr_span_h": 14.329248097075356
+    }
+  ]
+}
