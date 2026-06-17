@@ -10,7 +10,7 @@ import matplotlib.patches as mpatches
 import matplotlib.gridspec as gridspec
 import numpy as np
 import pandas as pd
-from data import EDA, GAP_THRESHOLD_S, ACC_TOL
+from src.data import EDA, GAP_THRESHOLD_S, ACC_TOL
 
 DATA_DIR = Path(__file__).parent.parent / 'report' if '__file__' in dir() else Path('../report')
 FIG_DIR = DATA_DIR / 'figures'
