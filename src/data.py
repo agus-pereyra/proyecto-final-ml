@@ -9,6 +9,7 @@ from pathlib import Path
 import numpy as np
 import torch
 from tqdm.auto import tqdm
+from plotly.subplots import make_subplots
 
 DATA_DIR = Path(__file__).parent.parent / 'data' if '__file__' in dir() else Path('../data')
 DATA_PATH = next((p for p in DATA_DIR.iterdir() if p.is_dir()), None) # primer directorio (debería haber solo uno)
@@ -370,6 +371,68 @@ class EDA:
             }, f, indent=2)
 
         return nights
+    
+    @staticmethod
+    def plot_motion_comparison_3d(patient: int, night: int, step: int = 1000):
+        # 1. Cargar datos
+        path = DATA_PATH / f'Bidslab{patient:02d}' / f'{night}'
+        motion = pd.read_csv(path / 'motion.csv')
+        mat = sio.loadmat(path / 'labels.mat')
+        
+        # 2. Definir paleta de colores fija
+        color_map = {
+            'Wake': '#d62728', 'N1': '#ff7f0e', 'N2': '#bcbd22', 
+            'N3': '#2ca02c', 'REM': '#1f77b4', 'Unknown': '#7f7f7f'
+        }
+        
+        expert_labels = mat['expert_label'].flatten()
+        dreem_labels = mat['dreem_label'].flatten()
+        
+        # 3. Sincronización
+        start_time = motion['Timestamp'].iloc[0]
+        motion['epoch_idx'] = ((motion['Timestamp'] - start_time) // 30).astype(int)
+        
+        # Asignar etiquetas evitando errores de índice
+        def get_label(idx, labels):
+            return STAGES_LABELS.get(labels[idx], 'Unknown') if idx < len(labels) else 'Unknown'
+
+        motion['expert_stage'] = motion['epoch_idx'].apply(lambda x: get_label(x, expert_labels))
+        motion['dreem_stage'] = motion['epoch_idx'].apply(lambda x: get_label(x, dreem_labels))
+        
+        df_plot = motion.iloc[::step, :]
+        
+        # 4. Crear figura
+        fig = make_subplots(
+            rows=1, cols=2,
+            specs=[[{'type': 'scatter3d'}, {'type': 'scatter3d'}]],
+            subplot_titles=('Expert Labels', 'Dreem Labels')
+        )
+        
+        # 5. Agregar trazos (filtramos solo etapas presentes en los datos para evitar errores)
+        for stage in STAGES_LABELS.values():
+            # Expert
+            d_exp = df_plot[df_plot['expert_stage'] == stage]
+            if not d_exp.empty:
+                fig.add_trace(
+                    dict(type='scatter3d', x=d_exp['x'], y=d_exp['y'], z=d_exp['z'], 
+                         mode='markers', name=stage, legendgroup=stage,
+                         marker=dict(size=2, color=color_map.get(stage, 'black'))),
+                    row=1, col=1
+                )
+            
+            # Dreem
+            d_dre = df_plot[df_plot['dreem_stage'] == stage]
+            if not d_dre.empty:
+                fig.add_trace(
+                    dict(type='scatter3d', x=d_dre['x'], y=d_dre['y'], z=d_dre['z'], 
+                         mode='markers', name=stage, legendgroup=stage, 
+                         showlegend=False,
+                         marker=dict(size=2, color=color_map.get(stage, 'black'))),
+                    row=1, col=2
+                )
+        
+        fig.update_layout(title=f'Classification comparison: patient {patient} - night {night} - step = {step}', height=600)
+        fig.show()
 
 class DataSet(torch.utils.data.Dataset):
     '''

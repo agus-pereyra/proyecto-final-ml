@@ -45,18 +45,34 @@ sleep staging, recurrent neural networks, heart rate variability, accelerometry,
 
 \section{Conjunto de Datos y Características}
 
-PhysioNet BIDSleep~\cite{bidsleep} recopila señales fisiológicas tales como la frecuencia cardiaca instantánea (IHR) y 3 ejes de acelerometría medidas con un Apple Watch a lo largo de 253 noches de 47 adultos sanos. Cada lapso de 30 segundos se encuentra etiquetado, por dos fuentes diferentes, como una etapa del sueño: \{0:Wake, 1:$N_1$, 2:$N_2$, 3:$N_3$, 4:REM, 5:Unknown\}
+PhysioNet BIDSleep~\cite{bidsleep} recopila señales fisiológicas tales como la frecuencia cardiaca instantánea 
+(IHR) y 3 ejes de acelerometría medidas con un Apple Watch a lo largo de 253 noches de 47 adultos sanos. Cada 
+lapso de 30 segundos se encuentra etiquetado, por dos fuentes diferentes, como una etapa del sueño: 
+\{0:Wake, 1:$N_1$, 2:$N_2$, 3:$N_3$, 4:REM, 5:Unknown\}
 
 \section{Metodología}
 
 \subsection{Métricas de Rendimiento}
 
-Dado que se tienen dos criterios para tomar como \textit{ground-truth} (etiquetas del experto y del dispositivo Dreem) usamos el \textbf{coeficiente Cohan's Kappa} \cite{cohen1960coefficient} para cuantificar cuán de acuerdo están entre sí.
+Dado que se tienen dos criterios para tomar como \textit{ground-truth} (etiquetas del experto y del dispositivo Dreem) 
+usamos el \textbf{coeficiente Cohan's Kappa} \cite{cohen1960coefficient} para cuantificar cuán de acuerdo están entre sí.
+\cite{landis1977measurement}
 \begin{equation}
     \kappa = \frac{p_o - p_e}{1 - p_e}
     \label{eq:cohen-kappa}
 \end{equation}
-\cite{landis1977measurement}
+
+Además, se usa una matriz de confusión para interpretar donde el modelo acierta en sus clasificaciones y donde falla. 
+
+Por otra parte, se utiliza la metrica de F1-scsore Macro para analizar el balance de las clasificaciones entre las clases
+($N = 6$ cantidad de etapas del sueño)
+$$F1 = 2 \cdot \frac{Precision \times Recall}{Precision + Recall} = \frac{2 \cdot TP}{2 \cdot TP + FP + FN}.$$
+
+
+\begin{equation}
+F1_{Macro} = \frac{1}{N}\cdot \sum_{i=1}^N F1_i
+    \label{eq:F1-score-Macro}
+\end{equation}
 
 \section{Resultados}
 
