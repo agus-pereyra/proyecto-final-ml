@@ -1,0 +1,142 @@
+{
+    "latex-workshop.linting.chktex.convertOutput.column.enabled": false,
+    "latex-workshop.latex.tools": [
+        {
+            "name": "latexmk",
+            "command": "latexmk",
+            "args": [
+                "-synctex=1",
+                "-interaction=nonstopmode",
+                "-file-line-error",
+                "-pdf",
+                "-aux-directory=build",
+                "%DOC%"
+            ],
+            "env": {}
+        },
+        {
+            "name": "xelatexmk",
+            "command": "latexmk",
+            "args": [
+                "-synctex=1",
+                "-interaction=nonstopmode",
+                "-file-line-error",
+                "-xelatex",
+                "-aux-directory=build",
+                "%DOC%"
+            ],
+            "env": {}
+        },
+        {
+            "name": "xelatexmk_shell",
+            "command": "latexmk",
+            "args": [
+                "-synctex=1",
+                "-interaction=nonstopmode",
+                "-file-line-error",
+                "-xelatex",
+                "-shell-escape",
+                "-aux-directory=build",
+                "%DOC%"
+            ],
+            "env": {}
+        },
+        {
+            "name": "pdflatex",
+            "command": "pdflatex",
+            "args": [
+                "-synctex=1",
+                "-interaction=nonstopmode",
+                "-file-line-error",
+                "-aux-directory=build",
+                "%DOC%"
+            ],
+            "env": {}
+        },
+        {
+            "name": "bibtex",
+            "command": "bibtex",
+            "args": [
+                "%DOCFILE%"
+            ],
+            "env": {}
+        },
+        {
+            "name": "dvisvgm",
+            "command": "dvisvgm",
+            "args": [
+                "--pdf",
+                "--output=%DOCFILE%.svg",
+                "--exact-bbox",
+                "--font-format=woff2",
+                "%DOCFILE%.pdf"
+            ]
+        },
+        {
+            "name": "gswin",
+            "command": "gswin64c",
+            "args": [
+                "-dNOPAUSE",
+                "-dBATCH",
+                "-sDEVICE=png16m",
+                "-r300",
+                "-dTextAlphaBits=4",
+                "-dGraphicsAlphaBits=4",
+                "-sOutputFile=%DOCFILE%.png",
+                "%DOCFILE%.pdf"
+            ]
+        }
+    ],
+    "latex-workshop.view.pdf.viewer": "tab",
+    "latex-workshop.view.pdf.ref.viewer": "tabOrBrowser",
+    "latex-workshop.synctex.afterBuild.enabled": true,
+    "latex-workshop.latex.recipes": [
+        {
+            "name": "latexmk",
+            "tools": [
+                "latexmk"
+            ]
+        },
+        {
+            "name": "xelatexmk",
+            "tools": [
+                "xelatexmk"
+            ]
+        },
+        {
+            "name": "xelateX w/ minted",
+            "tools": [
+                "xelatexmk_shell"
+            ]
+        },
+        {
+            "name": "forzar compilación manual",
+            "tools": [
+                "pdflatex",
+                "bibtex",
+                "pdflatex",
+                "pdflatex"
+            ]
+        },
+        {
+            "name": "SVG (dvisvgm)",
+            "tools": [
+                "pdflatex",
+                "dvisvgm"
+            ]
+        },
+        {
+            "name": "PNG (ghostscript)",
+            "tools": [
+                "pdflatex",
+                "gswin"
+            ]
+        }
+    ],
+    "latex-workshop.latex.recipe.default": "xelatexmk",
+    "latex-workshop.latex.clean.args": [
+        "-c",
+        "%TEX%"
+    ],
+    "latex.linter.enabled": false
+}
