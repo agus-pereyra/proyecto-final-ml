@@ -46,9 +46,15 @@ class EDA:
     '''
     @staticmethod
     def load_night(patient: int, night: int):
-        path = DATA_PATH / f'Bidslab{patient:02d}' / f'{night}' 
-        hr = pd.read_csv(path / 'hr.csv', header=None, names=['Timestamp', 'hr']) 
+        path = DATA_PATH / f'Bidslab{patient:02d}' / f'{night}'
+        hr = pd.read_csv(path / 'hr.csv', header=None, names=['Timestamp', 'hr'])
         motion = pd.read_csv(path / 'motion.csv')
+
+        # algunas noches traen filas corruptas (p. ej. P42 N4 termina con un
+        # Timestamp = 1.0 y x/y/z = NaN). Descartamos timestamps no plausibles
+        # (NaN o fuera del rango Unix esperable) para limpiar todo el pipeline.
+        hr = hr[hr['Timestamp'] > 1e9].reset_index(drop=True)
+        motion = motion[motion['Timestamp'] > 1e9].reset_index(drop=True)
 
         # pasaje timestamps de unix a segundos
         hr['datetime'] = pd.to_datetime(hr['Timestamp'], unit='s')
@@ -61,6 +67,56 @@ class EDA:
         rec_start = mat['recStart'][0]
         
         return hr, motion, dreem_labels, expert_labels, rec_start
+
+    @staticmethod
+    def valid_windows(report_path: Path = None):
+        '''
+        Lee el `quality_report.json` y devuelve un dict
+        {(patient, night): (valid_start_s, valid_end_s)} con la ventana
+        válida de cada noche (intersección señal/labels ya calculada por
+        `quality_report`). Es la fuente de verdad del recorte en memoria;
+        tanto la extracción de features como el armado de secuencias la usan.
+        '''
+        if report_path is None:
+            report_path = ANALYSIS_DIR / 'quality_report.json'
+        with open(report_path, encoding='utf-8') as f:
+            records = json.load(f)
+        return {(r['patient'], r['night']): (r['valid_start_s'], r['valid_end_s'])
+                for r in records}
+
+    @staticmethod
+    def load_night_clean(patient: int, night: int,
+                         valid_start: float = None, valid_end: float = None):
+        '''
+        Carga una noche y la recorta en memoria a su ventana válida, sin
+        tocar los archivos. `valid_start`/`valid_end` deberían venir de
+        `valid_windows()` (quality_report); si se omiten, se usa la
+        intersección simple entre la ventana etiquetada y el rango de hr.
+
+        Recorta hr y motion a [valid_start, valid_end) y las labels a las
+        epochs cuyo inicio cae dentro de esa ventana, devolviendo además el
+        timestamp de inicio de la primera epoch conservada (ya alineado).
+
+        Devuelve (hr, motion, dreem, expert, aligned_start).
+        '''
+        hr, motion, dreem, expert, rec_start = EDA.load_night(patient, night)
+        start = pd.Timestamp(str(rec_start), tz='America/New_York').timestamp()
+
+        if valid_start is None:
+            valid_start = max(start, float(hr['Timestamp'].iloc[0]))
+        if valid_end is None:
+            valid_end = min(start + len(expert) * 30, float(hr['Timestamp'].iloc[-1]))
+
+        hr = hr[(hr['Timestamp'] >= valid_start) & (hr['Timestamp'] < valid_end)].reset_index(drop=True)
+        motion = motion[(motion['Timestamp'] >= valid_start) & (motion['Timestamp'] < valid_end)].reset_index(drop=True)
+
+        i0 = int(max(0, np.ceil((valid_start - start) / 30)))
+        i1 = int(np.floor((valid_end - start) / 30))
+        expert = expert[i0:i1]
+        dreem = dreem[i0:i1]
+        aligned_start = start + i0 * 30
+
+        return hr, motion, dreem, expert, aligned_start
 
     @staticmethod
     def class_distribution():

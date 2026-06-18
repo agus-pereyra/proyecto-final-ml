@@ -29,12 +29,19 @@ STAGE_NAMES = {0: 'Wake', 1: 'N1', 2: 'N2', 3: 'N3', 4: 'REM', 5: 'Unknown'}
 def _draw_night_overview(night_data: pd.DataFrame, fontsize_scale: float = 1.0):
     hr, motion, dreem_labels, expert_labels, rec_start = night_data
 
+    # algunas noches traen filas corruptas Descartamos timestamps no plausibles
+    # (NaN o fuera del rango Unix esperable) para que no deformen el eje.
+    hr = hr[hr['Timestamp'] > 1e9]
+    motion = motion[motion['Timestamp'] > 1e9]
+
     label_fs = 14 * fontsize_scale
     tick_fs = 12 * fontsize_scale
     legend_fs = 14 * fontsize_scale
     stage_legend_fs = 12 * fontsize_scale
 
-    fig, ax = plt.subplots(4, 1, figsize=(14, 7.6), sharex=True, gridspec_kw={'height_ratios': [3, 3, 0.6, 0.6]})
+    # ejes: IHR, frecuencia instantánea del IHR (más bajo), acelerometría, expert, dreem
+    fig, ax = plt.subplots(5, 1, figsize=(14, 8.4), sharex=True,
+                           gridspec_kw={'height_ratios': [3, 0.9, 3, 0.6, 0.6]})
 
     # eje x en horas, comenzando desde 0
     t_min = min(hr['Timestamp'].min(), motion['Timestamp'].min())
@@ -42,14 +49,30 @@ def _draw_night_overview(night_data: pd.DataFrame, fontsize_scale: float = 1.0):
     motion_hours = (motion['Timestamp'] - t_min) / 3600
 
     ax[0].plot(hr_hours, hr['hr'], color='tab:red')
-    ax[1].plot(motion_hours, motion['x'], label='x', color='tab:red')
-    ax[1].plot(motion_hours, motion['y'], label='y', color='tab:green')
-    ax[1].plot(motion_hours, motion['z'], label='z', color='tab:blue')
+
+    # frecuencia instantánea de muestreo del IHR: 1/Δt entre timestamps consecutivos.
+    # El muestreo no es equiespaciado; fluctúa en torno a ~0.2 Hz (ver paper).
+    ts = hr['Timestamp'].values
+    dt = np.diff(ts)
+    valid = dt > 0  # timestamps duplicados (Δt=0) darían frecuencia infinita
+    inst_freq = 1.0 / dt[valid]
+    ax[1].plot(hr_hours.values[1:][valid], inst_freq, color='tab:orange', linewidth=0.6)
+    ax[1].set_yscale('log')
+    f_min, f_med, f_max = inst_freq.min(), np.median(inst_freq), inst_freq.max()
+    ax[1].set_ylim(f_min, f_max)
+    ax[1].set_yticks([f_min, f_med, f_max])
+    ax[1].set_yticklabels([f'{f_min:.2g}', f'{f_med:.2g}', f'{f_max:.2g}'])
+
+    ax[2].plot(motion_hours, motion['x'], label='x', color='tab:red')
+    ax[2].plot(motion_hours, motion['y'], label='y', color='tab:green')
+    ax[2].plot(motion_hours, motion['z'], label='z', color='tab:blue')
 
     ax[0].set_ylabel('IHR [bpm]', fontsize=label_fs)
-    ax[1].set_ylabel('Accelerometry [g]', fontsize=label_fs)
+    ax[1].set_ylabel('IHR Freq [Hz]', fontsize=label_fs)
+    ax[2].set_ylabel('Accelerometry [g]', fontsize=label_fs)
     ax[0].tick_params(axis='both', labelsize=tick_fs)
     ax[1].tick_params(axis='both', labelsize=tick_fs)
+    ax[2].tick_params(axis='both', labelsize=tick_fs)
 
     epoch_len = 30  # segundos
     # recStart en hora local (America/New_York); hr/motion en Unix/UTC
@@ -58,36 +81,38 @@ def _draw_night_overview(night_data: pd.DataFrame, fontsize_scale: float = 1.0):
     for i, label in enumerate(expert_labels):
         t0 = (start + i * epoch_len - t_min) / 3600
         t1 = t0 + epoch_len / 3600
-        ax[2].axvspan(t0, t1, color=STAGE_COLORS[label], zorder=0)
+        ax[3].axvspan(t0, t1, color=STAGE_COLORS[label], zorder=0)
 
     for i, label in enumerate(dreem_labels):
         t0 = (start + i * epoch_len - t_min) / 3600
         t1 = t0 + epoch_len / 3600
-        ax[3].axvspan(t0, t1, color=STAGE_COLORS[label], zorder=0)
-
-    ax[2].set_yticks([])
-    ax[2].tick_params(axis='both', labelsize=tick_fs)
-    ax[2].set_ylabel('Expert', fontsize=tick_fs)
+        ax[4].axvspan(t0, t1, color=STAGE_COLORS[label], zorder=0)
 
     ax[3].set_yticks([])
     ax[3].tick_params(axis='both', labelsize=tick_fs)
-    ax[3].set_ylabel('Dreem', fontsize=tick_fs)
+    ax[3].set_ylabel('Expert', fontsize=label_fs)
+
+    ax[4].set_yticks([])
+    ax[4].tick_params(axis='both', labelsize=tick_fs)
+    ax[4].set_ylabel('Dreem', fontsize=label_fs)
 
     legend_patches = [mpatches.Patch(color=c, label=STAGE_NAMES[s]) for s, c in STAGE_COLORS.items()]
-    ax[3].legend(handles=legend_patches, loc='upper center', bbox_to_anchor=(0.5, -1.6), ncol=6, fontsize=stage_legend_fs)
+    ax[4].legend(handles=legend_patches, loc='upper center', bbox_to_anchor=(0.5, -1.6), ncol=6, fontsize=stage_legend_fs)
 
-    ax[1].legend(loc='upper right', ncol=3, fontsize=legend_fs, handlelength=1, handletextpad=0.4)
+    ax[2].legend(loc='upper right', ncol=3, fontsize=legend_fs, handlelength=1, handletextpad=0.4)
     ax[0].grid(True, alpha=0.4, linestyle='--')
     ax[1].grid(True, alpha=0.4, linestyle='--')
+    ax[2].grid(True, alpha=0.4, linestyle='--')
 
     ax[0].set_ylim(hr['hr'].min(), hr['hr'].max())
-    ax[1].set_ylim(motion[['x', 'y', 'z']].min().min(), motion[['x', 'y', 'z']].max().max())
+    ax[2].set_ylim(motion[['x', 'y', 'z']].min().min(), motion[['x', 'y', 'z']].max().max())
 
-    ax[3].set_xlabel('Time [h]', fontsize=tick_fs)
+    ax[4].set_xlabel('Time [h]', fontsize=tick_fs)
 
     t_max = max(hr['Timestamp'].max(), motion['Timestamp'].max())
-    ax[3].set_xlim(0, (t_max - t_min) / 3600)
+    ax[4].set_xlim(0, (t_max - t_min) / 3600)
 
+    fig.align_ylabels(ax)
     plt.tight_layout()
 
     return fig
@@ -292,7 +317,7 @@ def problematic_nights_overview(json_path: Path = None, ncols: int = 4):
                             where=(acc_dev > ACC_TOL), color='red', alpha=0.35, zorder=1)
         draw_windows(ax_acc)
 
-        # criterios marcados (sólo se rotulan los significativos)
+        # criterios marcados (solo significativos)
         failing = []
         if internal_gap_s > internal_gap_threshold:
             failing.append(f'gap={internal_gap_s/60:.0f}min')
