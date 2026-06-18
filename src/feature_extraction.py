@@ -10,6 +10,20 @@ def extract_features(signal):
         return [0, 0]
     return [np.mean(signal), np.std(signal)]
 
+def extract_features(signal):
+    """Extrae features estadísticas enriquecidas."""
+    signal = pd.to_numeric(pd.Series(signal), errors='coerce').dropna().values
+    if len(signal) == 0:
+        return [0, 0, 0, 0, 0] # Ajustado a 5 features
+    
+    mean_val = np.mean(signal)
+    std_val = np.std(signal)
+    ptp_val = np.ptp(signal)
+    energy = np.sum(signal**2) / len(signal) # Energía normalizada
+    p90 = np.percentile(signal, 90)
+    
+    return [mean_val, std_val, ptp_val, energy, p90]
+
 def feature_extraction():
     
     root_dir = Path(__file__).resolve().parent.parent
@@ -18,6 +32,10 @@ def feature_extraction():
     
     cols = ['subject', 'night', 'hr_mean', 'hr_std', 
             'x_mean', 'x_std', 'y_mean', 'y_std', 'z_mean', 'z_std', 'label']
+    
+    features_per_sensor = ['_mean', '_std', '_ptp', '_energy', '_p90']
+    sensors = ['hr', 'x', 'y', 'z']
+    cols = ['subject', 'night'] + [s + f for s in sensors for f in features_per_sensor] + ['label']
 
     pd.DataFrame(columns=cols).to_csv(output_path, index=False)
 
