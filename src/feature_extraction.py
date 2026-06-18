@@ -1,62 +1,89 @@
-from pathlib import Path
 import pandas as pd
 import numpy as np
-from scipy import stats
+from pathlib import Path
 from scipy.io import loadmat
+from datetime import datetime
+import gc
 
 def extract_features(signal):
-    return [np.mean(signal), np.std(signal), np.ptp(signal), stats.skew(signal)]
+    if len(signal) == 0 or np.isnan(signal).any():
+        return [0, 0]
+    return [np.mean(signal), np.std(signal)]
 
 def feature_extraction():
     
     root_dir = Path(__file__).resolve().parent.parent
-    data_dir = root_dir / "data"
-    output_dir = root_dir / "data_extraction"
-    output_dir.mkdir(exist_ok=True)
-    output_path = output_dir / "dataset_final.csv"
+    data_dir = root_dir / "data/a-multi-night-instantaneous-heart-rate-and-accelerometry-dataset-with-eeg-sleep-stage-labels-1.0.0"
+    output_path = root_dir / "data_extraction/dataset_extraction.csv"
     
-    all_data = []
-    
-    # Buscamos todos los labels.mat
-    mat_files = list(data_dir.glob("**/labels.mat"))
-    
-    for mat_path in mat_files:
-        folder = mat_path.parent
-        
-        # Carga de señales
-        hr_data = pd.read_csv(folder / 'hr.csv').values.flatten()
-        motion_data = pd.read_csv(folder / 'motion.csv').values
-        
-        mat_data = loadmat(mat_path)
-    
-        claves = [k for k in mat_data.keys() if 'label' in k.lower() or 'stage' in k.lower()]
-        if not claves:
-            print(f"Saltando {mat_path}: no se encontraron claves de etiquetas válidas.")
-            continue
-        
+    cols = ['subject', 'night', 'hr_mean', 'hr_std', 
+            'x_mean', 'x_std', 'y_mean', 'y_std', 'z_mean', 'z_std', 'label']
 
-        clave_experto = next((k for k in claves if 'expert' in k.lower()), claves[0])
-        expert_labels = mat_data[clave_experto].flatten()
+    pd.DataFrame(columns=cols).to_csv(output_path, index=False)
 
-        
-        subject = folder.parent.name
-        night = folder.name
-        
-        n_epochs = len(expert_labels)
-        for i in range(n_epochs):
-            # Tu lógica de extracción
-            row = [subject, night]
-            row.extend(extract_features(hr_data[i*30:(i+1)*30]))
-            row.extend(extract_features(motion_data[i*30:(i+1)*30, 0]))
-            row.extend(extract_features(motion_data[i*30:(i+1)*30, 1]))
-            row.extend(extract_features(motion_data[i*30:(i+1)*30, 2]))
-            row.append(expert_labels[i])
-            all_data.append(row)
+    # Obtenemos los pacientes UNA SOLA VEZ
+    pacientes = [p for p in data_dir.iterdir() if p.is_dir()]
+    print(f"DEBUG: Encontré {len(pacientes)} pacientes.")
     
-    # Guardado
-    cols = ['subject', 'night', 'hr_mean', 'hr_std', 'hr_ptp', 'hr_skew', 
-            'x_mean', 'x_std', 'x_ptp', 'x_skew', 'y_mean', 'y_std', 'y_ptp', 'y_skew',
-            'z_mean', 'z_std', 'z_ptp', 'z_skew', 'label']
-    
-    pd.DataFrame(all_data, columns=cols).to_csv(output_path, index=False)
-    print(f"Dataset generado en: {output_path}")
+    for p_path in pacientes:
+        subject = str(p_path.name)
+        noches = [n for n in p_path.iterdir() if n.is_dir()]
+        
+        for n_path in noches:
+            night = str(n_path.name)
+            mat_path = n_path / "labels.mat"
+            
+            if not mat_path.exists() or not (n_path / 'hr.csv').exists():
+                continue
+
+            print(f"Procesando: {subject} - Noche {night}")
+
+            try:
+                # low_memory=False soluciona el DtypeWarning
+                hr_df = pd.read_csv(n_path / 'hr.csv', header=None, names=['ts', 'hr'], low_memory=False)
+                motion_df = pd.read_csv(n_path / 'motion.csv', names=['ts', 'x', 'y', 'z'], low_memory=False)
+                
+                # Convertimos columnas a numérico explícitamente
+                hr_df['ts'] = pd.to_numeric(hr_df['ts'], errors='coerce')
+                motion_df['ts'] = pd.to_numeric(motion_df['ts'], errors='coerce')
+            except Exception as e:
+                print(f"Error procesando {n_path}: {e}")
+                continue
+            
+            mat_data = loadmat(mat_path)
+            clave_experto = next((k for k in mat_data.keys() if 'expert' in k.lower()), None)
+            if clave_experto is None: continue
+            
+            expert_labels = mat_data[clave_experto].flatten()
+            
+            raw_rec_start = mat_data['recStart'][0] 
+            dt_object = datetime.strptime(str(raw_rec_start), '%Y-%m-%d %H:%M:%S')
+            rec_start = dt_object.timestamp()
+            
+            batch_data = []
+            for i in range(len(expert_labels)):
+                
+                start_t = rec_start + (i * 30)
+                end_t = start_t + 30
+                
+                hr_data = hr_df[(hr_df['ts'] >= start_t) & (hr_df['ts'] < end_t)]['hr']
+                # Convertimos a numérico, forzando a que lo que no sea número se vuelva NaN
+                hr_win = pd.to_numeric(hr_data, errors='coerce').values
+                
+                # Repetimos la lógica para motion
+                x_data = motion_df[(motion_df['ts'] >= start_t) & (motion_df['ts'] < end_t)]['x']
+                y_data = motion_df[(motion_df['ts'] >= start_t) & (motion_df['ts'] < end_t)]['y']
+                z_data = motion_df[(motion_df['ts'] >= start_t) & (motion_df['ts'] < end_t)]['z']
+                
+                feat_hr = extract_features(pd.to_numeric(hr_data, errors='coerce').values)
+                feat_x = extract_features(pd.to_numeric(x_data, errors='coerce').values)
+                feat_y = extract_features(pd.to_numeric(y_data, errors='coerce').values)
+                feat_z = extract_features(pd.to_numeric(z_data, errors='coerce').values)
+                
+                batch_data.append([subject, night] + feat_hr + feat_x + feat_y + feat_z + [expert_labels[i]])
+
+            pd.DataFrame(batch_data).to_csv(output_path, mode='a', header=False, index=False)
+            del hr_df, motion_df, batch_data
+            gc.collect()
+
+    print(f"Dataset generado exitosamente en {output_path}")
