@@ -28,6 +28,7 @@ PATIENCE_NUMBERS = [0,1,2,6,7,8,9,10,11,13,14,15,16,17,18,19,20,22,30,31,32,34,3
 GAP_THRESHOLD_S = 60.0           # gaps de ihr mayores a esto se detectan como discontinuidades
 ACC_TOL = 0.5                    # |sqrt(x²+y²+z²) - 1| > ACC_TOL indica acelerometría inválida
 INTERNAL_GAP_THRESHOLD_S = 600   # 10 min: máximo de gaps internos acumulados dentro de la ventana válida
+MIN_CLEAN_PREFIX_FRAC = 0.6      # prefijo contiguo cubierto mínimo para recortar la cola (en vez de descartar) una noche con gaps internos
 EDGE_TRUNC_THRESHOLD_S = 3600    # 1 hora: truncamiento de extremo a partir del cual la noche se grafica en el overview
 ALIGN_TOL_S = 30                 # 1 epoch: por debajo de esto señal y labels se consideran ya alineados (no se lista como modificada)
 
@@ -181,8 +182,13 @@ class EDA:
                     continue
 
                 mat = sio.loadmat(night_dir / 'labels.mat')
-                expert_labels.append(mat['expert_label'].flatten())
-                dreem_labels.append(mat['dreem_label'].flatten())
+                exp = mat['expert_label'].flatten()
+                dre = mat['dreem_label'].flatten()
+                # en 2 noches expert y dreem difieren en largo; se recortan al
+                # común para mantener la comparación alineada epoch a epoch
+                m = min(len(exp), len(dre))
+                expert_labels.append(exp[:m])
+                dreem_labels.append(dre[:m])
 
         return np.concatenate(expert_labels), np.concatenate(dreem_labels)
 
@@ -196,8 +202,7 @@ class EDA:
         labels respecto a la duración total del registro, y muestras
         de acelerometría/IHR con valores potencialmente inválidos.
 
-        Devuelve un DataFrame (resumen, una fila por noche) y guarda
-        el detalle completo (incluyendo listas de gaps) en un JSON.
+        Guarda el detalle completo (incluyendo listas de gaps) en un JSON.
         '''
         nights = []
         for patient in PATIENCE_NUMBERS:
@@ -339,9 +344,7 @@ class EDA:
         save_path.parent.mkdir(parents=True, exist_ok=True)
         with open(save_path, 'w', encoding='utf-8') as f:
             json.dump(records, f, indent=2)
-
-        df = pd.DataFrame(records).drop(columns=['hr_gaps', 'motion_gaps'])
-        return df
+        return
 
     @staticmethod
     def problematic_nights(quality_df: pd.DataFrame,
@@ -376,8 +379,6 @@ class EDA:
         cols = ['patient', 'night', 'leading_trunc_s', 'trailing_trunc_s',
                 'head_excess_s', 'tail_excess_s', 'internal_gap_s',
                 'valid_start_s', 'valid_end_s', 'hr_span_h']
-        nights = bad[cols].to_dict('records')
-
         def mods(d):
             m = []
             if d['head_excess_s'] > align_tol or d['tail_excess_s'] > align_tol:
@@ -387,6 +388,10 @@ class EDA:
             if d['internal_gap_s'] > internal_gap_threshold:
                 m.append('internal_gap')
             return m
+
+        nights = bad[cols].to_dict('records')
+        for d in nights:
+            d['modifications'] = mods(d)
 
         with open('../analysis/problematic_nights.json', 'w', encoding='utf-8') as f:
             json.dump({
@@ -427,7 +432,67 @@ class EDA:
             }, f, indent=2)
 
         return nights
-    
+
+    @staticmethod
+    def internal_gap_resolution(quality_df: pd.DataFrame = None,
+                                internal_gap_threshold: float = INTERNAL_GAP_THRESHOLD_S,
+                                min_clean_prefix_frac: float = MIN_CLEAN_PREFIX_FRAC):
+        '''
+        Decide cómo tratar cada noche con gaps internos (`internal_gap_s >
+        internal_gap_threshold`) según DÓNDE caen las epochs sin cobertura de hr
+        dentro de su ventana válida. Una epoch está "cubierta" si su ventana de
+        30 s contiene al menos un sample de hr.
+
+        - `trim_tail`: las epochs sin cobertura están agrupadas al final. El
+          prefijo contiguo cubierto `[valid_start, valid_start + first_gap)`
+          abarca >= `min_clean_prefix_frac` de la noche; se conserva ese prefijo
+          (100% cubierto, sin huecos internos → apto para secuencias) y se
+          descarta la cola recortando `valid_end` a `new_valid_end`.
+        - `discard`: los gaps son interiores o dispersos (el prefijo limpio es
+          menor a `min_clean_prefix_frac`). Un hueco en el medio rompe la
+          continuidad temporal (perjudicial para modelos secuenciales tipo
+          LSTM), por lo que la noche se descarta entera.
+
+        No se colapsan los gaps: el diagnóstico muestra que no son artefactos de
+        timestamps sino dropouts reales de medición (saltos de hasta ~60 bpm a
+        través del hueco), y colapsar el tiempo desalinearía las labels (ancladas
+        a tiempo absoluto, 30 s por epoch).
+
+        Si `quality_df` es None se lee de `quality_report.json`. Devuelve
+        `{(patient, night): {'action', 'new_valid_end', 'clean_prefix_frac',
+        'n_uncovered', 'n_epochs'}}`.
+        '''
+        if quality_df is None:
+            with open(ANALYSIS_DIR / 'quality_report.json', encoding='utf-8') as f:
+                quality_df = pd.DataFrame(json.load(f)).drop(
+                    columns=['hr_gaps', 'motion_gaps'], errors='ignore')
+
+        ig = quality_df[quality_df['internal_gap_s'] > internal_gap_threshold]
+        res = {}
+        for _, r in ig.iterrows():
+            p, n = int(r['patient']), int(r['night'])
+            hr, _, _, expert, al = EDA.load_night_clean(
+                p, n, r['valid_start_s'], r['valid_end_s'])
+            ts = hr['Timestamp'].values
+            n_ep = len(expert)
+            starts = al + np.arange(n_ep) * 30
+            covered = np.searchsorted(ts, starts + 30) > np.searchsorted(ts, starts)
+            uncov = ~covered
+            first_gap = int(np.argmax(uncov)) if uncov.any() else n_ep
+            frac = first_gap / n_ep if n_ep else 0.0
+            if frac >= min_clean_prefix_frac:
+                action, new_end = 'trim_tail', float(al + first_gap * 30)
+            else:
+                action, new_end = 'discard', None
+            res[(p, n)] = {
+                'action': action,
+                'new_valid_end': new_end,
+                'clean_prefix_frac': frac,
+                'n_uncovered': int(uncov.sum()),
+                'n_epochs': n_ep,
+            }
+        return res
+
     @staticmethod
     def plot_motion_comparison_3d(patient: int, night: int, step: int = 1000):
         # 1. Cargar datos

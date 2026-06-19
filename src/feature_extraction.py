@@ -1,4 +1,3 @@
-import json
 import numpy as np
 import pandas as pd
 import gc
@@ -6,9 +5,9 @@ from pathlib import Path
 from tqdm.auto import tqdm
 
 try:
-    from data import EDA, DATA_PATH, PATIENCE_NUMBERS, ANALYSIS_DIR
+    from data import EDA, DATA_PATH, PATIENCE_NUMBERS
 except ImportError:
-    from src.data import EDA, DATA_PATH, PATIENCE_NUMBERS, ANALYSIS_DIR
+    from src.data import EDA, DATA_PATH, PATIENCE_NUMBERS
 
 # --- parámetros de las features ---
 ACC_IMMOBILITY_TOL = 0.05   # | ||a|| - 1| por debajo de esto => muestra "inmóvil" [g]
@@ -101,7 +100,7 @@ def _add_temporal_features(dfn, base_cols, lags=LAGS, roll=ROLL_WINDOW):
     return pd.concat([dfn, pd.DataFrame(new, index=dfn.index)], axis=1)
 
 
-def feature_extraction(output_path: Path = None, skip_internal_gap: bool = True):
+def feature_extraction(output_path: Path = None, resolve_internal_gaps: bool = True):
     '''
     Convierte cada noche a una tabla de épocas (30 s) con features de IHR y
     acelerometría para modelos tabulares (XGBoost).
@@ -111,7 +110,12 @@ def feature_extraction(output_path: Path = None, skip_internal_gap: bool = True)
     se agregan features de contexto entre épocas (lags, deltas, ventanas
     móviles). El recorte a la ventana válida se aplica en memoria vía
     `EDA.load_night_clean` (fuente de verdad: `quality_report.json`), sin tocar
-    los CSV. Las noches con gaps internos (`internal_gap`) se descartan.
+    los CSV.
+
+    Manejo de gaps internos (`resolve_internal_gaps=True`): vía
+    `EDA.internal_gap_resolution`, las noches con gaps agrupados al final se
+    recortan a su prefijo contiguo cubierto (`trim_tail`) y las que tienen gaps
+    interiores/dispersos se descartan enteras (`discard`).
     '''
     root_dir = Path(__file__).resolve().parent.parent
     if output_path is None:
@@ -120,14 +124,16 @@ def feature_extraction(output_path: Path = None, skip_internal_gap: bool = True)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.unlink(missing_ok=True)  # se reescribe de cero en cada corrida
 
-    # ventanas válidas y noches a descartar, desde el reporte de calidad
+    # ventanas válidas y resolución de gaps internos, desde el reporte de calidad
     valid_windows = EDA.valid_windows()
     skip = set()
-    if skip_internal_gap:
-        with open(ANALYSIS_DIR / 'problematic_nights.json', encoding='utf-8') as f:
-            prob = json.load(f)
-        skip = {(e['patient'], e['night']) for e in prob['problematic']
-                if 'internal_gap' in e['modifications']}
+    if resolve_internal_gaps:
+        for (p, n), info in EDA.internal_gap_resolution().items():
+            if info['action'] == 'discard':
+                skip.add((p, n))
+            else:  # 'trim_tail': recorta la cola con gaps al prefijo limpio
+                vs, _ = valid_windows[(p, n)]
+                valid_windows[(p, n)] = (vs, info['new_valid_end'])
 
     nights = []
     for patient in PATIENCE_NUMBERS:
