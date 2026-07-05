@@ -64,15 +64,32 @@ def get_cnn_dataset(data_root='../data/a-multi-night-instantaneous-heart-rate-an
                 # Tolerancia relajada para HR (baja frecuencia) y requerimiento para Acc
                 if len(hr_win) < 2 or len(acc_win) < 10: continue
                 
-                # 2. Procesamiento (Interpolación y Binning)
-                grid = np.linspace(epoch_start, epoch_end, 30, dtype=np.float32)
+                # 2. Procesamiento (Interpolación y Binning a 5 Hz)
+                # 150 timesteps = 30 s * 5 Hz. Resolución suficiente para preservar
+                # la variabilidad del acelerómetro (50 Hz) sin inflar demasiado el input.
+                n_steps = 150
+                bin_dur = 30 / n_steps   # 0.2 s por bin
+
+                # HR: interpolada sobre la grilla densa (solo tiene ~5 puntos reales)
+                grid = np.linspace(epoch_start, epoch_end, n_steps, dtype=np.float32)
                 hr_fixed = np.interp(grid, hr_win['ts'], hr_win['hr'])
-                
+
+                # Acelerometría: magnitud invariante a orientación (x/y/z dependen de
+                # cómo esté puesto el reloj). Por cada bin guardamos media y std de la
+                # magnitud: el std es lo que codifica el movimiento y se pierde al promediar.
                 acc_win = acc_win.copy()
-                acc_win['sec'] = ((acc_win['Timestamp'] - epoch_start) // 1).astype(int)
-                acc_fixed = acc_win.groupby('sec')[['x', 'y', 'z']].mean().reindex(range(30), method='ffill').fillna(0).values
-                
-                patient_X.append(np.column_stack([hr_fixed, acc_fixed]))
+                mag = np.sqrt(acc_win['x']**2 + acc_win['y']**2 + acc_win['z']**2)
+                acc_win['mag'] = mag
+                acc_win['enmo'] = np.maximum(mag - 1.0, 0.0)
+                acc_win['bin'] = ((acc_win['Timestamp'] - epoch_start) / bin_dur).astype(int).clip(0, n_steps - 1)
+
+                grouped = acc_win.groupby('bin')
+                mag_mean = grouped['mag'].mean().reindex(range(n_steps), method='ffill').fillna(0).values
+                mag_std  = grouped['mag'].std().reindex(range(n_steps), method='ffill').fillna(0).values
+                enmo_mean = grouped['enmo'].mean().reindex(range(n_steps), method='ffill').fillna(0).values
+
+                # Canales: [HR, mag_mean, mag_std, enmo_mean]
+                patient_X.append(np.column_stack([hr_fixed, mag_mean, mag_std, enmo_mean]))
                 patient_y.append(int(label))
         
         # 3. Guardado condicional

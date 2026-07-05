@@ -6,6 +6,7 @@
 \usepackage{amsmath,amssymb,amsfonts}
 \usepackage{algorithmic}
 \usepackage{graphicx}
+\usepackage{float}
 \usepackage{textcomp}
 \usepackage{xcolor}
 \usepackage{hyperref}
@@ -34,7 +35,6 @@ Buenos Aires, Argentina \\
 \maketitle
 
 \begin{abstract}
-
 \end{abstract}
 
 \begin{IEEEkeywords}
@@ -42,6 +42,13 @@ sleep staging, recurrent neural networks, heart rate variability, accelerometry,
 \end{IEEEkeywords}
 
 \section{Introducción}
+
+Frente a la polisomnografía —costosa y confinada al laboratorio—, los dispositivos de muñeca de
+consumo registran IHR y acelerometría de forma continua y no invasiva, habilitando el monitoreo
+domiciliario. Este trabajo clasifica las etapas del sueño usando sólo estas dos señales, con las
+etiquetas de un experto como \textit{ground-truth}, y aporta (i) un control de calidad de las
+señales y (ii) la comparación entre un modelo tabular con \textit{features} manuales y una CNN
+que aprende representaciones directamente de la señal.
 
 \section{Conjunto de Datos y Características}
 
@@ -55,28 +62,135 @@ lapso de 30 segundos se encuentra etiquetado, por dos fuentes diferentes, como u
 \subsection{Métricas de Rendimiento}
 
 Dado que se tienen dos criterios para tomar como \textit{ground-truth} (etiquetas del experto y del dispositivo Dreem) 
-usamos el \textbf{coeficiente Cohan's Kappa} \cite{cohen1960coefficient} para cuantificar cuán de acuerdo están entre sí.
+usamos el \textbf{coeficiente Cohen's Kappa} \cite{cohen1960coefficient} para cuantificar cuán de acuerdo están entre sí.
 \cite{landis1977measurement}
 \begin{equation}
     \kappa = \frac{p_o - p_e}{1 - p_e}
     \label{eq:cohen-kappa}
 \end{equation}
 
-Además, se usa una matriz de confusión para interpretar donde el modelo acierta en sus clasificaciones y donde falla. 
+El desempeño de clasificación se mide con el \textbf{F1-score macro} —media del F1 por clase, que
+al pesar todas las etapas por igual es la métrica más honesta bajo el desbalance—, complementado
+con la \textbf{accuracy} global y la \textbf{matriz de confusión}, que localiza entre qué etapas
+ocurren los errores.
 
-Por otra parte, se utiliza la metrica de F1-scsore Macro para analizar el balance de las clasificaciones entre las clases
-($N = 6$ cantidad de etapas del sueño)
-$$F1 = 2 \cdot \frac{Precision \times Recall}{Precision + Recall} = \frac{2 \cdot TP}{2 \cdot TP + FP + FN}.$$
+\subsection{Limpieza de señales}
 
+Antes de modelar se aplica un control de calidad noche a noche. Sobre cada noche se computan
+\textit{gaps} temporales en IHR y acelerometría ($>60$s entre muestras), duración de la señal y
+fracción de acelerometría inválida ($|\lVert a \rVert - 1| > 0.5g$), y se define la
+\textbf{ventana válida} como la intersección entre el rango etiquetado y el de IHR \emph{continua}.
+Los desajustes se clasifican en \textit{signal\_excess} (señal sin etiqueta, se recorta),
+\textit{label\_trunc} (etiqueta sin señal, se recorta) e \textit{internal\_gap} (huecos $>10$ min).
+Estos últimos, verificados como \textit{dropouts} reales del sensor, se resuelven recortando la
+cola si el prefijo limpio supera el 60\% o descartando la noche. Todo se aplica en memoria, sin
+alterar los archivos originales.
 
-\begin{equation}
-F1_{Macro} = \frac{1}{N}\cdot \sum_{i=1}^N F1_i
-    \label{eq:F1-score-Macro}
-\end{equation}
+\subsection{Elección de modelos}
+
+Como \textbf{baseline} se usa \textbf{XGBoost} sobre \textit{features} por época: modelo tabular
+robusto, que maneja valores faltantes de forma nativa y da importancia interpretable. Las
+\textit{features} resumen IHR y HRV en el dominio temporal (RMSSD, pNN50, etc.) y la acelerometría
+sobre la magnitud $\lVert a \rVert$ —invariante a la orientación del reloj— e incorporan contexto
+inter-época (\textit{lags}, \textit{leads}, promedios móviles), clave en \textit{sleep staging}.
+
+Frente a él, una \textbf{CNN 1D} opera sobre la señal cruda, con la hipótesis de aprender la
+dinámica temporal —incluida la variabilidad de alta frecuencia de la acelerometría que las
+\textit{features} manuales descartan— sin \textit{feature engineering}. Cada época se lleva a un
+tensor $150 \times 4$ (IHR interpolada y tres estadísticos por bin de $0.2$s de la magnitud
+invariante: media, desvío y ENMO), que tres bloques convolucionales
+(Conv1D--BatchNorm--ReLU--\textit{pooling}) más \textit{global average pooling} y un clasificador
+denso mapean a las cinco etapas; el desbalance se compensa ponderando la \textit{cross-entropy}
+por la frecuencia inversa de clase. En ambos casos la partición \textbf{agrupa por paciente} para
+evitar \textit{leakage} y medir generalización a sujetos nuevos, descartando \textit{Unknown}.
 
 \section{Resultados}
 
+\subsection{Análisis exploratorio y calidad de datos}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\linewidth]{figures/night-overview-0-1.png}\\[2pt]
+\includegraphics[width=\linewidth]{figures/night-overview-8-1.png}
+\caption{Dos noches representativas: IHR y acelerometría junto con las etapas del sueño
+etiquetadas por el experto.}
+\label{fig:nights}
+\end{figure}
+
+La Fig.~\ref{fig:nights} muestra dos noches completas, donde se aprecia la estructura cíclica del
+sueño: la IHR desciende y se estabiliza en los tramos de sueño profundo ($N_3$) y se torna más
+variable en REM, mientras que la acelerometría sólo registra actividad marcada en las transiciones
+a vigilia. Esta correspondencia entre la dinámica de las señales y el hipnograma es la que hace la
+tarea abordable a partir de datos de muñeca.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\linewidth]{figures/stages-distribution.png}
+\caption{Distribución de etapas: $N_2$ y Wake dominan; $N_1$ es minoritaria.}
+\label{fig:stages}
+\end{figure}
+
+La distribución de clases (Fig.~\ref{fig:stages}) está fuertemente desbalanceada: $N_2$ y Wake
+concentran la mayor parte de las épocas mientras que $N_1$ es marginal. Este desbalance justifica
+evaluar con $F1_{Macro}$, que pondera cada clase por igual, y compensar la frecuencia de clase
+durante el entrenamiento.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\linewidth]{figures/problematic-nights-overview.png}
+\caption{Noches con pérdida de labels o \textit{gaps} internos: en verde la ventana válida; en
+naranja los labels recortados; en rojo los \textit{gaps}.}
+\label{fig:problematic}
+\end{figure}
+
+El control de calidad (Fig.~\ref{fig:problematic}) revela que \textbf{228 de 253 noches} (90.1\%)
+requieren alguna modificación —en su mayoría el trivial \textit{signal\_excess}— y que sólo 4
+presentan \textit{internal\_gap}. La figura ilustra cómo la ventana válida (verde) recupera el
+tramo aprovechable de cada noche, descartando los labels sin señal (naranja) y los huecos internos
+(rojo) que romperían la continuidad temporal.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\linewidth]{figures/label-confusion-matrix.png}
+\caption{Matriz de confusión experto vs.\ Dreem; el desacuerdo se concentra en etapas adyacentes.}
+\label{fig:cm-expert-dreem}
+\end{figure}
+
+El acuerdo entre las dos fuentes de etiquetado (Ec.~\ref{eq:cohen-kappa}) fija el techo de la
+tarea: $\kappa = 0.74$ global, máximo en REM ($0.85$) y menor en Wake ($0.70$). Su matriz de
+confusión (Fig.~\ref{fig:cm-expert-dreem}) muestra que el desacuerdo entre el experto y Dreem se
+concentra en etapas contiguas ($N_1$ vs.\ $N_2$ y Wake), las transiciones intrínsecamente más
+ambiguas de discriminar.
+
+\subsection{Clasificación}
+
+El baseline XGBoost alcanza $F1_{Macro} = 0.47$ y $\kappa = 0.38$
+(Ec.~\ref{eq:cohen-kappa}) frente al experto, con \textit{accuracy} del 55\%
+(Tabla~\ref{tab:resultados}). Pese al desbalance, capta señal discriminativa en las cinco clases,
+aunque lejos del techo humano ($\kappa = 0.74$); los errores se concentran entre etapas adyacentes
+($N_1$ vs.\ $N_2$ y REM).
+
+\begin{table}[!ht]
+\caption{Rendimiento en test (5 clases) frente al etiquetado del experto.}
+\label{tab:resultados}
+\centering
+\begin{tabular}{lcc}
+\hline
+\textbf{Modelo} & \textbf{$F1_{Macro}$} & \textbf{Cohen's $\kappa$} \\
+\hline
+Acuerdo experto--Dreem (referencia) & --- & 0.74 \\
+XGBoost (tabular) & 0.47 & 0.38 \\
+\hline
+\end{tabular}
+\end{table}
+
 \section{Conclusión}
+
+Presentamos un \textit{pipeline} de estadificación del sueño sobre señales de muñeca, del control
+de calidad a la clasificación. El acuerdo experto--Dreem ($\kappa = 0.74$) fija un techo realista
+y el baseline tabular ($F1_{Macro}=0.47$, $\kappa = 0.38$) supera al azar pese al desbalance. La
+principal limitación del enfoque convolucional es la falta de contexto inter-época —clave en el
+tabular—, lo que motiva extenderlo a modelos recurrentes (LSTM/BiLSTM) sobre secuencias de épocas.
 
 \bibliographystyle{IEEEtran}
 \bibliography{references}
