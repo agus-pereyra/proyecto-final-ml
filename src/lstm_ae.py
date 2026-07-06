@@ -29,7 +29,7 @@ from src.lstm import (
 
 @dataclass
 class ConfigAE:
-    features_path: str = '../data/epoch_features.csv'
+    features_path: str = '../data_extraction/epoch_features.csv'
 
     # arquitectura
     hidden_size: int = 128
@@ -50,8 +50,8 @@ class ConfigAE:
 
     seed: int = 36631
     device: str = 'cuda' if torch.cuda.is_available() else 'cpu'
-    ckpt_path: str = '../src/models/best_ae.pt'
-    embeddings_path: str = '../data/ae_embeddings.parquet'
+    ckpt_path: str = '../models/best_ae.pt'
+    embeddings_path: str = '../data_extraction/ae_embeddings.parquet'
 
     # se completan en runtime
     feature_cols: list = field(default=None)

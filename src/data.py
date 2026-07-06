@@ -251,25 +251,33 @@ class EDA:
 
             hr_start = float(hr['Timestamp'].iloc[0])
             hr_end = float(hr['Timestamp'].iloc[-1])
+            mo_start = float(motion['Timestamp'].iloc[0])
+            mo_end = float(motion['Timestamp'].iloc[-1])
 
-            # ventana válida: intersección entre la ventana etiquetada y el rango de señal de hr
-            valid_start = max(start, hr_start)
-            valid_end = min(label_end, hr_end)
+            # ventana válida: intersección entre la ventana etiquetada y el rango de señal
+            # de AMBAS señales (hr y acelerometría). Los modelos usan IHR + acelerometría,
+            # así que un tramo con una sola de las dos NO es válido (p. ej. la acelerometría
+            # que se corta antes que el IHR al final de la noche).
+            valid_start = max(start, hr_start, mo_start)
+            valid_end = min(label_end, hr_end, mo_end)
 
             # un gap cuya señal sólo reanuda FUERA de la ventana etiquetada no es un
             # gap interno: es el borde donde terminan (o empiezan) los datos continuos
             # de la noche, y lo que "reanuda" es grabación diurna ajena al sueño.
-            # Recortamos la ventana válida a ese tramo continuo para que esos huecos
-            # cuenten como truncamiento de extremo y no como gap interno.
-            ts = hr['Timestamp'].values
-            g0 = ts[:-1][np.diff(ts) > gap_threshold]  # último sample antes de cada gap
-            g1 = ts[1:][np.diff(ts) > gap_threshold]    # primer sample tras cada gap
-            out_right = g0[(g0 < valid_end) & (g1 > label_end)]
-            if len(out_right):
-                valid_end = min(valid_end, float(out_right.min()))
-            out_left = g1[(g1 > valid_start) & (g0 < start)]
-            if len(out_left):
-                valid_start = max(valid_start, float(out_left.max()))
+            # Recortamos la ventana válida a ese tramo continuo (para hr y para motion).
+            def _trim_edges(ts_arr, vs, ve):
+                d = np.diff(ts_arr)
+                g0 = ts_arr[:-1][d > gap_threshold]  # último sample antes de cada gap
+                g1 = ts_arr[1:][d > gap_threshold]   # primer sample tras cada gap
+                out_right = g0[(g0 < ve) & (g1 > label_end)]
+                if len(out_right):
+                    ve = min(ve, float(out_right.min()))
+                out_left = g1[(g1 > vs) & (g0 < start)]
+                if len(out_left):
+                    vs = max(vs, float(out_left.max()))
+                return vs, ve
+            valid_start, valid_end = _trim_edges(hr['Timestamp'].values, valid_start, valid_end)
+            valid_start, valid_end = _trim_edges(motion['Timestamp'].values, valid_start, valid_end)
 
             # diferencias al inicio/fin entre señal y labels (se truncan siempre)
             # labels sin señal (se recortan las labels):
@@ -279,12 +287,16 @@ class EDA:
             head_excess_s = max(0.0, start - hr_start)
             tail_excess_s = max(0.0, hr_end - label_end)
 
-            # gaps de hr dentro de la ventana válida, recortando cada gap a esa ventana:
-            # sólo se cuenta la porción que cae en [valid_start, valid_end].
-            gap_start = hr['Timestamp'].shift(1)
-            gap_end = hr['Timestamp']
-            gap_overlap = (np.minimum(gap_end, valid_end) - np.maximum(gap_start, valid_start)).clip(lower=0)
-            internal_gap_s = float(gap_overlap.loc[hr_gaps_mask.index][hr_gaps_mask].sum())
+            # gaps internos dentro de la ventana válida, recortando cada gap a esa ventana
+            # (sólo la porción que cae en [valid_start, valid_end]). Se calcula por señal:
+            # un hueco de IHR o de acelerometría invalida ese tramo por igual.
+            def _internal_gap(ts_series, gaps_mask):
+                gs = ts_series.shift(1)
+                ge = ts_series
+                ov = (np.minimum(ge, valid_end) - np.maximum(gs, valid_start)).clip(lower=0)
+                return float(ov.loc[gaps_mask.index][gaps_mask].sum())
+            internal_gap_s = _internal_gap(hr['Timestamp'], hr_gaps_mask)
+            motion_internal_gap_s = _internal_gap(motion['Timestamp'], motion_gaps_mask)
 
             # valores NaN en las señales 
             hr_nan_count = int(hr[['Timestamp', 'hr']].isna().any(axis=1).sum())
@@ -334,6 +346,7 @@ class EDA:
                 'valid_start_s': valid_start,
                 'valid_end_s': valid_end,
                 'internal_gap_s': internal_gap_s,
+                'motion_internal_gap_s': motion_internal_gap_s,
                 'hr_gaps': hr_gaps,
                 'motion_gaps': motion_gaps,
             })
@@ -370,14 +383,18 @@ class EDA:
 
         Devuelve la lista de dicts (una por noche modificada).
         '''
-        q = quality_df
+        q = quality_df.copy()
+        if 'motion_internal_gap_s' not in q.columns:
+            q['motion_internal_gap_s'] = 0.0
         needs_signal_trim = (q['head_excess_s'] > align_tol) | (q['tail_excess_s'] > align_tol)
         needs_label_trim = (q['leading_trunc_s'] > align_tol) | (q['trailing_trunc_s'] > align_tol)
-        needs_gap_fix = q['internal_gap_s'] > internal_gap_threshold
+        # un gap interno de IHR O de acelerometría dispara la reparación/descarte
+        needs_gap_fix = ((q['internal_gap_s'] > internal_gap_threshold)
+                         | (q['motion_internal_gap_s'] > internal_gap_threshold))
         bad = q[needs_signal_trim | needs_label_trim | needs_gap_fix]
 
         cols = ['patient', 'night', 'leading_trunc_s', 'trailing_trunc_s',
-                'head_excess_s', 'tail_excess_s', 'internal_gap_s',
+                'head_excess_s', 'tail_excess_s', 'internal_gap_s', 'motion_internal_gap_s',
                 'valid_start_s', 'valid_end_s', 'hr_span_h']
         def mods(d):
             m = []
@@ -385,7 +402,8 @@ class EDA:
                 m.append('signal_excess')
             if d['leading_trunc_s'] > align_tol or d['trailing_trunc_s'] > align_tol:
                 m.append('label_trunc')
-            if d['internal_gap_s'] > internal_gap_threshold:
+            if (d['internal_gap_s'] > internal_gap_threshold
+                    or d.get('motion_internal_gap_s', 0.0) > internal_gap_threshold):
                 m.append('internal_gap')
             return m
 
@@ -423,6 +441,7 @@ class EDA:
                         'head_excess_s': float(d['head_excess_s']),
                         'tail_excess_s': float(d['tail_excess_s']),
                         'internal_gap_s': float(d['internal_gap_s']),
+                        'motion_internal_gap_s': float(d.get('motion_internal_gap_s', 0.0)),
                         'valid_start_s': float(d['valid_start_s']),
                         'valid_end_s': float(d['valid_end_s']),
                         'hr_span_h': float(d['hr_span_h']),
@@ -467,16 +486,24 @@ class EDA:
                 quality_df = pd.DataFrame(json.load(f)).drop(
                     columns=['hr_gaps', 'motion_gaps'], errors='ignore')
 
-        ig = quality_df[quality_df['internal_gap_s'] > internal_gap_threshold]
+        mig = quality_df['motion_internal_gap_s'] if 'motion_internal_gap_s' in quality_df.columns \
+            else pd.Series(0.0, index=quality_df.index)
+        ig = quality_df[(quality_df['internal_gap_s'] > internal_gap_threshold)
+                        | (mig > internal_gap_threshold)]
         res = {}
         for _, r in ig.iterrows():
             p, n = int(r['patient']), int(r['night'])
-            hr, _, _, expert, al = EDA.load_night_clean(
+            hr, motion, _, expert, al = EDA.load_night_clean(
                 p, n, r['valid_start_s'], r['valid_end_s'])
             ts = hr['Timestamp'].values
+            mts = motion['Timestamp'].values
             n_ep = len(expert)
             starts = al + np.arange(n_ep) * 30
-            covered = np.searchsorted(ts, starts + 30) > np.searchsorted(ts, starts)
+            # una época está cubierta si tiene IHR (>=2) Y acelerometría (>=10), igual que
+            # los filtros por época de feature_extraction / build_night_sequences.
+            hr_cnt = np.searchsorted(ts, starts + 30) - np.searchsorted(ts, starts)
+            mo_cnt = np.searchsorted(mts, starts + 30) - np.searchsorted(mts, starts)
+            covered = (hr_cnt >= 2) & (mo_cnt >= 10)
             uncov = ~covered
             first_gap = int(np.argmax(uncov)) if uncov.any() else n_ep
             frac = first_gap / n_ep if n_ep else 0.0

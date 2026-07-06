@@ -130,6 +130,92 @@ def night_overview(night_data: pd.DataFrame, patient_nr: int = None, night_nr: i
 
     plt.show()
 
+def _resolved_valid_window(patient: int, night: int):
+    '''Ventana válida de la noche con la MISMA resolución de gaps internos que usan
+    feature_extraction y build_night_sequences (trim_tail recorta valid_end).'''
+    vs, ve = EDA.valid_windows()[(patient, night)]
+    res = EDA.internal_gap_resolution().get((patient, night))
+    if res and res.get('action') == 'trim_tail' and res.get('new_valid_end') is not None:
+        ve = res['new_valid_end']
+    return vs, ve
+
+def _draw_night_prediction_overview(patient: int, night: int, predictions: dict,
+                                    fontsize_scale: float = 1.0):
+    '''
+    Como night_overview pero centrado en las ETIQUETAS: dibuja IHR + acelerometría y, debajo,
+    un hipnograma (banda de colores por época) para Expert, Dreem y cada modelo pasado en
+    `predictions`. Cada entrada de `predictions` es {nombre: (epochs, y_pred)} tal como los
+    devuelve `lstm.predict_night` (épocas alineadas al índice de la ventana limpia). Las épocas
+    sin predicción quedan Unknown (blanco).
+    '''
+    vs, ve = _resolved_valid_window(patient, night)
+    hr, motion, dreem, expert, start = EDA.load_night_clean(patient, night, vs, ve)
+    hr = hr[hr['Timestamp'] > 1e9]
+    motion = motion[motion['Timestamp'] > 1e9]
+
+    n_ep = len(expert)
+    rows = {'Expert': np.asarray(expert, dtype=int), 'Dreem': np.asarray(dreem, dtype=int)}
+    for name, (epochs, preds) in predictions.items():
+        arr = np.full(n_ep, 5, dtype=int)           # 5 = Unknown por defecto (blanco)
+        epochs = np.asarray(epochs); preds = np.asarray(preds)
+        keep = (epochs >= 0) & (epochs < n_ep)
+        arr[epochs[keep]] = preds[keep]
+        rows[name] = arr
+
+    label_fs = 13 * fontsize_scale
+    tick_fs = 11 * fontsize_scale
+    legend_fs = 11 * fontsize_scale
+
+    n_bands = len(rows)
+    height_ratios = [3, 3] + [0.55] * n_bands
+    fig, ax = plt.subplots(2 + n_bands, 1, figsize=(14, 6 + 0.5 * n_bands), sharex=True,
+                           gridspec_kw={'height_ratios': height_ratios})
+
+    hr_h = (hr['Timestamp'] - start) / 3600
+    mo_h = (motion['Timestamp'] - start) / 3600
+    ax[0].plot(hr_h, hr['hr'], color='tab:red')
+    ax[0].set_ylabel('IHR [bpm]', fontsize=label_fs)
+    ax[1].plot(mo_h, motion['x'], label='x', color='tab:red')
+    ax[1].plot(mo_h, motion['y'], label='y', color='tab:green')
+    ax[1].plot(mo_h, motion['z'], label='z', color='tab:blue')
+    ax[1].set_ylabel('Accel [g]', fontsize=label_fs)
+    ax[1].legend(loc='upper right', ncol=3, fontsize=legend_fs, handlelength=1, handletextpad=0.4)
+    for a in (ax[0], ax[1]):
+        a.grid(True, alpha=0.4, linestyle='--')
+        a.tick_params(axis='both', labelsize=tick_fs)
+
+    for r, (name, labels) in enumerate(rows.items()):
+        a = ax[2 + r]
+        for i, lab in enumerate(labels):
+            a.axvspan(i * 30 / 3600, (i + 1) * 30 / 3600, color=STAGE_COLORS[int(lab)], zorder=0)
+        a.set_yticks([])
+        a.set_ylabel(name, fontsize=label_fs, rotation=0, ha='right', va='center', labelpad=8)
+        a.tick_params(axis='both', labelsize=tick_fs)
+
+    legend_patches = [mpatches.Patch(color=c, label=STAGE_NAMES[s]) for s, c in STAGE_COLORS.items()]
+    ax[-1].legend(handles=legend_patches, loc='upper center', bbox_to_anchor=(0.5, -1.4),
+                  ncol=6, fontsize=legend_fs)
+    ax[-1].set_xlabel('Time [h]', fontsize=tick_fs)
+
+    t_max = max(hr['Timestamp'].max(), motion['Timestamp'].max())
+    ax[0].set_xlim(0, (t_max - start) / 3600)
+    fig.align_ylabels(ax)
+    plt.tight_layout()
+    return fig
+
+def night_prediction_overview(patient: int, night: int, predictions: dict, save: bool = False):
+    '''
+    Dibuja el overview de una noche con las predicciones de los modelos superpuestas como
+    hipnogramas. `predictions`: {nombre: (epochs, y_pred)} (salida de `lstm.predict_night`).
+    Ej.: night_prediction_overview(20, 1, {'LSTM tabular': (e1,p1), 'Híbrido': (e2,p2)}).
+    '''
+    fig = _draw_night_prediction_overview(patient, night, predictions, fontsize_scale=1.0)
+    fig.suptitle(f'Night {night} — Patient {patient:02d}: expert / dreem / predicciones', fontsize=15)
+    fig.tight_layout()
+    if save:
+        fig.savefig(FIG_DIR / f'night-predictions-{patient}-{night}.png', dpi=200, bbox_inches='tight')
+    plt.show()
+
 def _draw_class_distribution(distribution: dict, fontsize_scale: float = 1.0):
     label_fs = 12 * fontsize_scale
     tick_fs = 11 * fontsize_scale

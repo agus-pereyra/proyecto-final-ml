@@ -2,7 +2,6 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
-
 class CNN(nn.Module):
     def __init__(self, num_classes=5):
         super(CNN, self).__init__()
@@ -51,7 +50,7 @@ class CNN(nn.Module):
 
 def train_model(model, train_loader, val_loader, class_weights,
                 epochs=50, lr=0.001, patience=10,
-                model_path='../data_extraction/best_model.pth'):
+                model_path='../models/best_cnn.pth'):
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = model.to(device)

@@ -4,7 +4,8 @@ Datos por NOCHE (señal cruda) para el híbrido CNN+BiLSTM.
 `build_night_sequences` reprocesa la señal alineada (reusando la alineación
 "fuente de verdad" de data.py) y guarda por paciente X (N,150,4), y (N,) y
 night_id (N,). `NightSignalDataset` entrega una secuencia por noche para
-alimentar el `SleepStager` de lstm.py; el padding lo hace `lstm.collate_nights`.
+alimentar el modo híbrido de lstm.py (`make_hybrid_loaders`); el padding lo hace
+`lstm.collate_nights`.
 
 Lo genuinamente nuevo que lstm.py no tiene: lstm.py trabaja sobre las FEATURES
 tabulares (epoch_features.csv), mientras que el híbrido necesita la SEÑAL CRUDA
@@ -24,7 +25,6 @@ try:
     from data import EDA
 except ImportError:
     from src.data import EDA
-
 
 def _epoch_tensor(hr_win, acc_win, epoch_start, epoch_end, n_steps=150):
     '''
@@ -47,7 +47,6 @@ def _epoch_tensor(hr_win, acc_win, epoch_start, epoch_end, n_steps=150):
     enmo_mean = grouped['enmo'].mean().reindex(range(n_steps), method='ffill').fillna(0).values
 
     return np.column_stack([hr_fixed, mag_mean, mag_std, enmo_mean])
-
 
 def build_night_sequences(output_dir='../data_extraction/sequences', n_patients=None, n_steps=150):
     '''
@@ -73,8 +72,9 @@ def build_night_sequences(output_dir='../data_extraction/sequences', n_patients=
     output_dir = os.path.abspath(output_dir)
     os.makedirs(output_dir, exist_ok=True)
 
-    for patient in tqdm(patients, desc='Procesando pacientes'):
-        X_list, y_list, nid_list = [], [], []
+    pbar = tqdm(patients, desc='Procesando pacientes', colour='blue')
+    for patient in pbar:
+        X_list, y_list, nid_list, ep_list = [], [], [], []
 
         for night in nights_by_patient[patient]:
             valid_start, valid_end = windows[(patient, night)]
@@ -101,19 +101,35 @@ def build_night_sequences(output_dir='../data_extraction/sequences', n_patients=
                 X_list.append(_epoch_tensor(hr_win, acc_win, epoch_start, epoch_end, n_steps))
                 y_list.append(int(label))
                 nid_list.append(night)
+                ep_list.append(i)   # índice de época en la ventana limpia (alinea con epoch_features)
 
         if X_list:
             path = os.path.join(output_dir, f"Bidslab{patient:02d}.npz")
             np.savez_compressed(path,
                                 X=np.array(X_list, dtype=np.float32),
                                 y=np.array(y_list, dtype=np.int8),
-                                night_id=np.array(nid_list, dtype=np.int16))
-            print(f"-> Bidslab{patient:02d}: {len(X_list)} épocas, {len(set(nid_list))} noches.")
+                                night_id=np.array(nid_list, dtype=np.int16),
+                                epoch=np.array(ep_list, dtype=np.int16))
+            pbar.set_description(f'P{patient:02d} ({len(X_list)} epochs, {len(set(nid_list))} nights)')
         else:
-            print(f"-> Bidslab{patient:02d}: sin épocas válidas.")
+            pbar.set_description(f'P{patient:02d} (sin épocas válidas)')
 
     print(f"--- Listo en: {output_dir} ---")
 
+def channel_stats(files):
+    '''
+    Media/desvío por canal (los 4: HR, mag_mean, mag_std, enmo_mean) sobre TODAS
+    las épocas de los archivos dados (típicamente los de train). Se usa para
+    estandarizar la señal cruda antes de la CNN: el canal HR (~40-100) domina por
+    dos órdenes de magnitud sobre enmo (~0), así que sin esto la red arranca sesgada.
+    std=0 -> 1. Devuelve mean, std como arrays float32 de forma (4,).
+    '''
+    acc = [np.load(f)['X'] for f in files]          # cada uno [N, 150, 4]
+    arr = np.concatenate(acc, axis=0).reshape(-1, acc[0].shape[-1])
+    mean = arr.mean(axis=0)
+    std = arr.std(axis=0)
+    std[std == 0] = 1.0
+    return mean.astype(np.float32), std.astype(np.float32)
 
 class NightSignalDataset(Dataset):
     '''
@@ -121,8 +137,13 @@ class NightSignalDataset(Dataset):
     de build_night_sequences y agrupa por night_id (las filas ya vienen en orden
     de época). Compatible con `lstm.collate_nights`, que padea feats con 0.0 y
     labels con UNKNOWN.
+
+    Si se pasan `mean`/`std` (forma (4,), calculadas con `channel_stats` sobre el
+    train), la señal se estandariza por canal en `__getitem__`.
     '''
-    def __init__(self, files):
+    def __init__(self, files, mean=None, std=None):
+        self.mean = mean
+        self.std = std
         self.nights = []
         for f in files:
             d = np.load(f)
@@ -136,6 +157,8 @@ class NightSignalDataset(Dataset):
 
     def __getitem__(self, i):
         X, y = self.nights[i]
+        if self.mean is not None:
+            X = (X - self.mean) / self.std
         return torch.from_numpy(X.copy()), torch.from_numpy(y.copy())
 
 

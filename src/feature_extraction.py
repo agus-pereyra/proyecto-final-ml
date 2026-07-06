@@ -119,7 +119,7 @@ def feature_extraction(output_path: Path = None, resolve_internal_gaps: bool = T
     '''
     root_dir = Path(__file__).resolve().parent.parent
     if output_path is None:
-        output_path = root_dir / 'data' / 'epoch_features.csv'
+        output_path = root_dir / 'data_extraction' / 'epoch_features.csv'
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.unlink(missing_ok=True)  # se reescribe de cero en cada corrida
@@ -157,6 +157,7 @@ def feature_extraction(output_path: Path = None, resolve_internal_gaps: bool = T
 
         n_ep = len(expert)
         rows = []
+        valid = []  # época válida = IHR>=2 y acelerometría>=10 (mismo criterio que el híbrido/CNN)
         for i in range(n_ep):
             t0 = start + i * 30
             t1 = t0 + 30
@@ -168,9 +169,12 @@ def feature_extraction(output_path: Path = None, resolve_internal_gaps: bool = T
             feat.update(_epoch_accel_features(mag[am]))
             feat['epoch_frac'] = i / n_ep if n_ep > 0 else 0.0
             rows.append(feat)
+            valid.append(int(hm.sum()) >= 2 and int(am.sum()) >= 10)
 
         dfn = pd.DataFrame(rows)
         base_cols = [c for c in dfn.columns if c != 'epoch_frac']
+        # features temporales sobre la secuencia COMPLETA (lags/leads con el vecino real),
+        # antes de descartar épocas inválidas
         dfn = _add_temporal_features(dfn, base_cols)
 
         dfn.insert(0, 'epoch', np.arange(n_ep))
@@ -178,6 +182,10 @@ def feature_extraction(output_path: Path = None, resolve_internal_gaps: bool = T
         dfn.insert(0, 'subject', patient)
         dfn['label'] = [int(x) for x in expert]   # etiqueta del experto (target)
         dfn['dreem'] = [int(x) for x in dreem]    # etiqueta de Dreem (referencia)
+
+        # descartamos las épocas sin cobertura de ambas señales: el índice `epoch` queda
+        # no-contiguo donde se dropeó, alineado con build_night_sequences (mismo criterio).
+        dfn = dfn[np.array(valid)]
 
         dfn.to_csv(output_path, mode='w' if not header_written else 'a',
                    header=not header_written, index=False)
