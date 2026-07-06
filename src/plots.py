@@ -216,6 +216,135 @@ def night_prediction_overview(patient: int, night: int, predictions: dict, save:
         fig.savefig(FIG_DIR / f'night-predictions-{patient}-{night}.png', dpi=200, bbox_inches='tight')
     plt.show()
 
+def _raw_vs_clean_overview(patient: int, night: int, fontsize_scale: float = 1.0):
+    '''
+    Overview estilo night_overview que muestra una noche CRUDA y el efecto del procesamiento:
+    IHR y acelerometría con la ventana válida sombreada (verde) y lo removido en gris, más tres
+    hipnogramas: Expert (cruda), Dreem (cruda) y Expert (procesada) donde las épocas descartadas
+    (fuera de la ventana o sin cobertura de ambas señales: IHR<2 o acc<10) quedan en blanco.
+    Reconstruye la decisión de procesamiento en vivo (ventana válida resuelta + filtro por época),
+    así refleja el pipeline sin depender de los CSV/npz ya generados.
+    '''
+    hr, motion, dreem, expert, rec_start = EDA.load_night(patient, night)
+    hr = hr[hr['Timestamp'] > 1e9]
+    motion = motion[motion['Timestamp'] > 1e9]
+    start = pd.Timestamp(str(rec_start), tz='America/New_York').timestamp()
+
+    vs, ve = _resolved_valid_window(patient, night)
+    gap_res = EDA.internal_gap_resolution().get((patient, night))
+    discarded = bool(gap_res and gap_res.get('action') == 'discard')
+
+    # validez por época (mismo criterio que feature_extraction / build_night_sequences)
+    n_ep = len(expert)
+    starts = start + np.arange(n_ep) * 30
+    hr_ts, mo_ts = hr['Timestamp'].values, motion['Timestamp'].values
+    hr_cnt = np.searchsorted(hr_ts, starts + 30) - np.searchsorted(hr_ts, starts)
+    mo_cnt = np.searchsorted(mo_ts, starts + 30) - np.searchsorted(mo_ts, starts)
+    in_win = (starts >= vs) & (starts < ve)
+    kept = in_win & (hr_cnt >= 2) & (mo_cnt >= 10) & (not discarded)
+
+    label_fs = 13 * fontsize_scale
+    tick_fs = 11 * fontsize_scale
+    legend_fs = 11 * fontsize_scale
+
+    fig, ax = plt.subplots(5, 1, figsize=(14, 8), sharex=True,
+                           gridspec_kw={'height_ratios': [3, 3, 0.6, 0.6, 0.6]})
+
+    t_min = min(float(hr['Timestamp'].min()), float(motion['Timestamp'].min()))
+    # la vista se limita al alcance real de la noche (IHR / etiquetas): motion suele traer
+    # muestras espurias muy posteriores (hasta decenas de horas) que el procesamiento remueve.
+    label_end = start + n_ep * 30
+    t_max = label_end  # la ventana etiquetada define la noche; señal más allá es excedente/espuria
+    to_h = lambda t: (t - t_min) / 3600
+    vs_h, ve_h, end_h = to_h(vs), to_h(ve), to_h(t_max)
+
+    ax[0].plot(to_h(hr['Timestamp']), hr['hr'], color='tab:red')
+    ax[0].set_ylabel('IHR [bpm]', fontsize=label_fs)
+    hr_view = hr[to_h(hr['Timestamp']).between(0, to_h(t_max))]
+    if len(hr_view):
+        ax[0].set_ylim(float(hr_view['hr'].min()), float(hr_view['hr'].max()))
+    ax[1].plot(to_h(motion['Timestamp']), motion['x'], label='x', color='tab:red')
+    ax[1].plot(to_h(motion['Timestamp']), motion['y'], label='y', color='tab:green')
+    ax[1].plot(to_h(motion['Timestamp']), motion['z'], label='z', color='tab:blue')
+    ax[1].set_ylabel('Accel [g]', fontsize=label_fs)
+    # límites Y según lo que cae dentro de la vista (evita que las muestras espurias los estiren)
+    mo_view = motion[to_h(motion['Timestamp']).between(0, end_h)]
+    if len(mo_view):
+        lo = float(mo_view[['x', 'y', 'z']].min().min())
+        hi = float(mo_view[['x', 'y', 'z']].max().max())
+        ax[1].set_ylim(lo, hi)
+    ax[1].legend(loc='upper right', ncol=3, fontsize=legend_fs, handlelength=1, handletextpad=0.4)
+
+    # ventana válida (verde) y tramos removidos (gris) sobre las señales
+    for a in (ax[0], ax[1]):
+        if not discarded and ve_h > vs_h:
+            a.axvspan(vs_h, ve_h, color='mediumseagreen', alpha=0.13, zorder=0)
+            a.axvline(vs_h, color='seagreen', linewidth=1.1, zorder=1)
+            a.axvline(ve_h, color='seagreen', linewidth=1.1, zorder=1)
+            if vs_h > 0:
+                a.axvspan(0, vs_h, color='gray', alpha=0.18, zorder=0)
+            if end_h > ve_h:
+                a.axvspan(ve_h, end_h, color='gray', alpha=0.18, zorder=0)
+        else:  # noche descartada: todo removido
+            a.axvspan(0, end_h, color='gray', alpha=0.22, zorder=0)
+        a.grid(True, alpha=0.4, linestyle='--')
+        a.tick_params(axis='both', labelsize=tick_fs)
+
+    # gaps de señal (Δt > GAP_THRESHOLD_S) dentro de la vista, en rojo: marcan las
+    # discontinuidades que motivan el recorte/descarte (p. ej. el gap interno de IHR de P42 N4).
+    def _mark_gaps(a, ts_arr):
+        if len(ts_arr) < 2:
+            return
+        d = np.diff(ts_arr)
+        for i in np.where(d > GAP_THRESHOLD_S)[0]:
+            a0, a1 = max(ts_arr[i], t_min), min(ts_arr[i + 1], t_max)
+            if a1 > a0:
+                a.axvspan(to_h(a0), to_h(a1), color='red', alpha=0.35, zorder=1)
+    _mark_gaps(ax[0], hr_ts)
+    _mark_gaps(ax[1], mo_ts)
+
+    def _band(a, labels, mask=None):
+        for i, lab in enumerate(labels):
+            col = STAGE_COLORS[int(lab)] if (mask is None or mask[i]) else 'white'
+            a.axvspan((start + i * 30 - t_min) / 3600, (start + (i + 1) * 30 - t_min) / 3600,
+                      color=col, zorder=0)
+        a.set_yticks([])
+        a.tick_params(axis='both', labelsize=tick_fs)
+
+    _band(ax[2], expert)
+    ax[2].set_ylabel('Expert\n(cruda)', fontsize=label_fs, rotation=0, ha='right', va='center', labelpad=8)
+    _band(ax[3], dreem)
+    ax[3].set_ylabel('Dreem\n(cruda)', fontsize=label_fs, rotation=0, ha='right', va='center', labelpad=8)
+    _band(ax[4], expert, kept)
+    ax[4].set_ylabel('Expert\n(procesada)', fontsize=label_fs, rotation=0, ha='right', va='center', labelpad=8)
+
+    legend_patches = [mpatches.Patch(color=c, label=STAGE_NAMES[s]) for s, c in STAGE_COLORS.items()]
+    legend_patches.append(mpatches.Patch(facecolor='red', alpha=0.35, label='gap señal (Δt>60s)'))
+    ax[4].legend(handles=legend_patches, loc='upper center', bbox_to_anchor=(0.5, -1.4),
+                 ncol=7, fontsize=legend_fs)
+    ax[4].set_xlabel('Time [h]', fontsize=tick_fs)
+    ax[0].set_xlim(0, end_h)
+    fig.align_ylabels(ax)
+    plt.tight_layout()
+
+    n_kept = int(kept.sum())
+    estado = 'DESCARTADA' if discarded else f'{n_kept}/{n_ep} épocas conservadas'
+    fig.suptitle(f'Cruda vs procesada — P{patient:02d} N{night}  ·  ventana '
+                 f'[{vs_h:.2f}, {ve_h:.2f}] h  ·  {estado}', fontsize=14)
+    fig.tight_layout()
+    return fig
+
+def raw_vs_clean_overview(patient: int, night: int, save: bool = False):
+    '''
+    Dibuja para una noche la señal cruda y el resultado del procesamiento (ventana válida +
+    filtro por época): night_overview con la ventana sombreada y el hipnograma Expert antes
+    (cruda) y después (procesada). Ej.: raw_vs_clean_overview(20, 1).
+    '''
+    fig = _raw_vs_clean_overview(patient, night, fontsize_scale=1.0)
+    if save:
+        fig.savefig(FIG_DIR / f'raw-vs-clean-{patient}-{night}.png', dpi=200, bbox_inches='tight')
+    plt.show()
+
 def _draw_class_distribution(distribution: dict, fontsize_scale: float = 1.0):
     label_fs = 12 * fontsize_scale
     tick_fs = 11 * fontsize_scale

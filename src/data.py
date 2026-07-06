@@ -219,6 +219,11 @@ class EDA:
 
             hr = pd.read_csv(night_dir / 'hr.csv', header=None, names=['Timestamp', 'hr'])
             motion = pd.read_csv(night_dir / 'motion.csv')
+            # descartar filas con timestamps corruptos (misma limpieza que load_night; p. ej.
+            # Bidslab42/4/motion.csv termina con Timestamp=1.0). Necesario ahora que la ventana
+            # usa también los bordes de motion: sin esto mo_end=1.0 rompería la ventana.
+            hr = hr[hr['Timestamp'] > 1e9].reset_index(drop=True)
+            motion = motion[motion['Timestamp'] > 1e9].reset_index(drop=True)
             mat = sio.loadmat(night_dir / 'labels.mat')
 
             expert_labels = mat['expert_label'].flatten()
@@ -388,9 +393,10 @@ class EDA:
             q['motion_internal_gap_s'] = 0.0
         needs_signal_trim = (q['head_excess_s'] > align_tol) | (q['tail_excess_s'] > align_tol)
         needs_label_trim = (q['leading_trunc_s'] > align_tol) | (q['trailing_trunc_s'] > align_tol)
-        # un gap interno de IHR O de acelerometría dispara la reparación/descarte
-        needs_gap_fix = ((q['internal_gap_s'] > internal_gap_threshold)
-                         | (q['motion_internal_gap_s'] > internal_gap_threshold))
+        # solo el gap interno de IHR dispara reparación/descarte (rompe la secuencia). Los
+        # gaps de acelerometría se resuelven dropeando épocas, no la noche (ver
+        # internal_gap_resolution); motion_internal_gap_s queda como campo informativo.
+        needs_gap_fix = q['internal_gap_s'] > internal_gap_threshold
         bad = q[needs_signal_trim | needs_label_trim | needs_gap_fix]
 
         cols = ['patient', 'night', 'leading_trunc_s', 'trailing_trunc_s',
@@ -402,8 +408,7 @@ class EDA:
                 m.append('signal_excess')
             if d['leading_trunc_s'] > align_tol or d['trailing_trunc_s'] > align_tol:
                 m.append('label_trunc')
-            if (d['internal_gap_s'] > internal_gap_threshold
-                    or d.get('motion_internal_gap_s', 0.0) > internal_gap_threshold):
+            if d['internal_gap_s'] > internal_gap_threshold:
                 m.append('internal_gap')
             return m
 
@@ -486,24 +491,21 @@ class EDA:
                 quality_df = pd.DataFrame(json.load(f)).drop(
                     columns=['hr_gaps', 'motion_gaps'], errors='ignore')
 
-        mig = quality_df['motion_internal_gap_s'] if 'motion_internal_gap_s' in quality_df.columns \
-            else pd.Series(0.0, index=quality_df.index)
-        ig = quality_df[(quality_df['internal_gap_s'] > internal_gap_threshold)
-                        | (mig > internal_gap_threshold)]
+        # La decisión trim_tail/discard se basa SOLO en la continuidad del IHR: un gap
+        # contiguo de IHR rompe la secuencia y hay que reparar/descartar. Los dropouts de
+        # acelerometría (dispersos) NO descartan la noche: los resuelve el filtro por época
+        # de feature_extraction / build_night_sequences (se dropea la época, no la noche), y
+        # el recorte de acc al borde ya lo hizo la ventana válida (quality_report).
+        ig = quality_df[quality_df['internal_gap_s'] > internal_gap_threshold]
         res = {}
         for _, r in ig.iterrows():
             p, n = int(r['patient']), int(r['night'])
-            hr, motion, _, expert, al = EDA.load_night_clean(
+            hr, _, _, expert, al = EDA.load_night_clean(
                 p, n, r['valid_start_s'], r['valid_end_s'])
             ts = hr['Timestamp'].values
-            mts = motion['Timestamp'].values
             n_ep = len(expert)
             starts = al + np.arange(n_ep) * 30
-            # una época está cubierta si tiene IHR (>=2) Y acelerometría (>=10), igual que
-            # los filtros por época de feature_extraction / build_night_sequences.
-            hr_cnt = np.searchsorted(ts, starts + 30) - np.searchsorted(ts, starts)
-            mo_cnt = np.searchsorted(mts, starts + 30) - np.searchsorted(mts, starts)
-            covered = (hr_cnt >= 2) & (mo_cnt >= 10)
+            covered = np.searchsorted(ts, starts + 30) > np.searchsorted(ts, starts)
             uncov = ~covered
             first_gap = int(np.argmax(uncov)) if uncov.any() else n_ep
             frac = first_gap / n_ep if n_ep else 0.0
