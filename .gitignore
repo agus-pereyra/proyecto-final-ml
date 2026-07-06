@@ -48,3 +48,4 @@ output.png
 /data_extraction/epoch_features.csv
 
 /data_extraction/processed_data
+/data_extraction/sequences
