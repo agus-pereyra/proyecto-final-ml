@@ -43,12 +43,7 @@ sleep staging, recurrent neural networks, heart rate variability, accelerometry,
 
 \section{Introducción}
 
-Frente a la polisomnografía —costosa y confinada al laboratorio—, los dispositivos de muñeca de
-consumo registran IHR y acelerometría de forma continua y no invasiva, habilitando el monitoreo
-domiciliario. Este trabajo clasifica las etapas del sueño usando sólo estas dos señales, con las
-etiquetas de un experto como \textit{ground-truth}, y aporta (i) un control de calidad de las
-señales y (ii) la comparación entre un modelo tabular con \textit{features} manuales y una CNN
-que aprende representaciones directamente de la señal.
+Frente a la polisomnografía -- costosa y confinada al laboratorio --, los dispositivos \emph{smart-watch} son capaces de registrar IHR (\emph{Instantaneous Heart Rate}) y acelerometría de forma continua y no invasiva, habilitando el monitoreo domiciliario. 
 
 \section{Conjunto de Datos y Características}
 
@@ -110,30 +105,14 @@ evitar \textit{leakage} y medir generalización a sujetos nuevos, descartando \t
 
 \begin{figure}[H]
 \centering
-\includegraphics[width=\linewidth]{figures/night-overview-0-1.png}\\[2pt]
-\includegraphics[width=\linewidth]{figures/night-overview-8-1.png}
-\caption{Dos noches representativas: IHR y acelerometría junto con las etapas del sueño
-etiquetadas por el experto.}
+\includegraphics[width=\linewidth]{figures/night-overview-0-1.png}
+\caption{Representación visual de una noche completa (Paciente 00, Noche 1)}
 \label{fig:nights}
 \end{figure}
 
-La Fig.~\ref{fig:nights} muestra dos noches completas, donde se aprecia la estructura cíclica del
-sueño: la IHR desciende y se estabiliza en los tramos de sueño profundo ($N_3$) y se torna más
-variable en REM, mientras que la acelerometría sólo registra actividad marcada en las transiciones
-a vigilia. Esta correspondencia entre la dinámica de las señales y el hipnograma es la que hace la
-tarea abordable a partir de datos de muñeca.
+La Fig.~\ref{fig:nights} muestra las señales de una noche completa, donde se aprecia la estructura cíclica del sueño: la IHR desciende y se estabiliza en los tramos de sueño profundo ($N_3$) y se torna más variable en REM mientras que la acelerometría sólo registra actividad marcada en las transiciones a vigilia. Esta correspondencia entre la dinámica de las señales y el hipnograma es la que hace la tarea abordable a partir de datos de muñeca.
 
-\begin{figure}[H]
-\centering
-\includegraphics[width=\linewidth]{figures/stages-distribution.png}
-\caption{Distribución de etapas: $N_2$ y Wake dominan; $N_1$ es minoritaria.}
-\label{fig:stages}
-\end{figure}
-
-La distribución de clases (Fig.~\ref{fig:stages}) está fuertemente desbalanceada: $N_2$ y Wake
-concentran la mayor parte de las épocas mientras que $N_1$ es marginal. Este desbalance justifica
-evaluar con $F1_{Macro}$, que pondera cada clase por igual, y compensar la frecuencia de clase
-durante el entrenamiento.
+La distribución de clases (Fig.~\ref{fig:stages}) está fuertemente desbalanceada: $N_2$ y Wake concentran la mayor parte de las épocas mientras que $N_1$ es marginal. Este desbalance justifica evaluar con $F1_{Macro}$, que pondera cada clase por igual, y compensar la frecuencia de clase durante el entrenamiento.
 
 \begin{figure}[H]
 \centering
@@ -178,8 +157,13 @@ aunque lejos del techo humano ($\kappa = 0.74$); los errores se concentran entre
 \hline
 \textbf{Modelo} & \textbf{$F1_{Macro}$} & \textbf{Cohen's $\kappa$} \\
 \hline
-Acuerdo experto--Dreem (referencia) & --- & 0.74 \\
-XGBoost (tabular) & 0.47 & 0.38 \\
+Dreem Label & --- & 0.74 \\
+XGBoost(features) & 0.4707 & 0.3776 \\
+XGBoost(embeddings) & 0.3971 & 0.2867 \\
+XGBoost(features+embeddings) & 0.4686 & 0.3762 \\
+MLP(features) & & \\
+LSTM(Identity) & 0.559 & 0.443\\
+LSTM(CNN1d) & & \\
 \hline
 \end{tabular}
 \end{table}

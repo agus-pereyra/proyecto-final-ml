@@ -28,7 +28,7 @@ COLLAPSE_4_NAMES = ['Wake', 'Light', 'Deep', 'REM']
 STAGE_NAMES = ['Wake', 'N1', 'N2', 'N3', 'REM']
 
 @dataclass
-class Config:
+class ConfigLSTM:
     features_path: str = '../data/epoch_features.csv'
 
     # arquitectura
@@ -136,14 +136,14 @@ class IdentityEncoder(EpochEncoder):
     def forward(self, x):
         return x
 
-class SleepStager(nn.Module):
+class LSTM(nn.Module):
     '''
     encoder -> LSTM (con packing para ignorar el padding) -> Linear por timestep.
 
-    Configurable vía Config: hidden_size, num_layers, dropout, bidirectional. El
+    Configurable vía ConfigLSTM: hidden_size, num_layers, dropout, bidirectional. El
     mismo código sirve para LSTM y BiLSTM (sólo cambia `bidirectional`).
     '''
-    def __init__(self, cfg: Config, encoder: EpochEncoder = None):
+    def __init__(self, cfg: ConfigLSTM, encoder: EpochEncoder = None):
         super().__init__()
         self.encoder = encoder if encoder is not None else IdentityEncoder(cfg.input_size)
         self.lstm = nn.LSTM(
@@ -170,7 +170,7 @@ class SleepStager(nn.Module):
                                      total_length=feats.shape[1])
         return self.head(out)  # [B, T, N_CLASSES]
 
-def split_subjects(df: pd.DataFrame, cfg: Config):
+def split_subjects(df: pd.DataFrame, cfg: ConfigLSTM):
     '''Particiona los SUJETOS (no noches ni épocas) en train/val/test disjuntos.'''
     subjects = np.array(sorted(df['subject'].unique()))
     rng = np.random.default_rng(cfg.seed)
@@ -249,7 +249,7 @@ def collect_predictions(model, loader, device):
         ps.append(pred[valid].cpu().numpy())
     return np.concatenate(ys), np.concatenate(ps)
 
-def make_loaders(cfg: Config):
+def make_loaders(cfg: ConfigLSTM):
     '''
     Carga las features, splitea por sujeto, estandariza con stats del train y arma
     los DataLoaders. Devuelve (loaders, stats, splits_subjects).
@@ -271,7 +271,7 @@ def make_loaders(cfg: Config):
         )
     return loaders, (mean, std), subj, splits['train']
 
-def train(cfg: Config, encoder: EpochEncoder = None):
+def train(cfg: ConfigLSTM, encoder: EpochEncoder = None):
     '''
     Entrena la LSTM inter-época y guarda el mejor checkpoint por Kappa de validación.
     Devuelve (model, history, test_metrics).
@@ -282,7 +282,7 @@ def train(cfg: Config, encoder: EpochEncoder = None):
     loaders, (mean, std), subj, train_df = make_loaders(cfg)
     print(f'sujetos -> train {len(subj["train"])} | val {len(subj["val"])} | test {len(subj["test"])}')
 
-    model = SleepStager(cfg, encoder).to(device)
+    model = LSTM(cfg, encoder).to(device)
     weight = class_weights(train_df, device) if cfg.use_class_weights else None
     criterion = nn.CrossEntropyLoss(weight=weight, ignore_index=UNKNOWN)
     optim = torch.optim.Adam(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
@@ -339,5 +339,5 @@ def train(cfg: Config, encoder: EpochEncoder = None):
     return model, history, test_m
 
 if __name__ == '__main__':
-    cfg = Config()
+    cfg = ConfigLSTM()
     train(cfg)

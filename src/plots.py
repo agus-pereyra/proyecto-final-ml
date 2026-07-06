@@ -118,7 +118,7 @@ def _draw_night_overview(night_data: pd.DataFrame, fontsize_scale: float = 1.0):
     return fig
 
 def night_overview(night_data: pd.DataFrame, patient_nr: int = None, night_nr: int = None):
-    save_fig = _draw_night_overview(night_data, fontsize_scale=1.3)
+    save_fig = _draw_night_overview(night_data, fontsize_scale=1.1)
     file_name = f'night-overview-{patient_nr}-{night_nr}' if (patient_nr is not None and night_nr is not None) else 'night-overview'
     save_fig.savefig(FIG_DIR / f'{file_name}.png')
     plt.close(save_fig)
