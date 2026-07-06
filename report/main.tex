@@ -43,14 +43,68 @@ sleep staging, recurrent neural networks, heart rate variability, accelerometry,
 
 \section{Introducción}
 
-Frente a la polisomnografía -- costosa y confinada al laboratorio --, los dispositivos \emph{smart-watch} son capaces de registrar IHR (\emph{Instantaneous Heart Rate}) y acelerometría de forma continua y no invasiva, habilitando el monitoreo domiciliario. 
+Frente a la polisomnografía -- costosa y confinada al laboratorio --, los dispositivos \emph{smart-watch} son capaces 
+de registrar IHR (\emph{Instantaneous Heart Rate}) y acelerometría de forma continua y no invasiva, habilitando el 
+monitoreo domiciliario.
+
+La \emph{estadificación del sueño} (\emph{sleep staging}) --asignar una etapa a cada época de
+$30$\,s de registro, según el estándar clínico AASM-- es central para el diagnóstico de trastornos
+como la apnea o el insomnio, pero hoy depende de la polisomnografía y de la anotación manual de un
+experto, lo que la vuelve cara e incómoda. Lograrla a partir de señales de muñeca abriría la puerta
+a un monitoreo accesible y prolongado en el tiempo.
+
+Abordamos la tarea como un problema de \textbf{clasificación multiclase supervisada}. La entrada de
+nuestro algoritmo es la IHR y la acelerometría triaxial de una época de $30$\,s (o su secuencia a lo
+largo de la noche), y utilizamos modelos de aprendizaje automático --desde un \emph{baseline}
+tabular (XGBoost, MLP) hasta redes sobre la señal cruda (CNN 1D) y modelos secuenciales
+(LSTM/BiLSTM y un híbrido CNN--LSTM)-- para predecir la etapa del sueño
+\{Wake, $N_1$, $N_2$, $N_3$, REM\}. Como referencia se emplean las etiquetas de un experto
+(\emph{ground-truth}) y las del dispositivo Dreem, basado en EEG. El eje del trabajo es comparar
+esta progresión de modelos para cuantificar el aporte del \textbf{contexto temporal inter-época}
+--la dependencia entre etapas contiguas-- frente a la clasificación de cada época de forma aislada.
+
+La Fig.~\ref{fig:nights} muestra un ejemplo de la entrada: las señales de IHR y acelerometría de una
+noche completa junto al hipnograma de referencia. Ya se aprecia la estructura cíclica del sueño --la
+IHR desciende y se estabiliza en sueño profundo ($N_3$) y se vuelve más variable en REM, mientras
+que la acelerometría sólo registra actividad en las transiciones a vigilia--, correspondencia que
+hace la tarea abordable a partir de datos de muñeca.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\linewidth]{figures/night-overview-0-1.png}
+\caption{Ejemplo de la entrada del algoritmo: señales (IHR y acelerometría) e hipnograma de una
+noche completa (Paciente 00, Noche 1).}
+\label{fig:nights}
+\end{figure} 
 
 \section{Conjunto de Datos y Características}
 
 PhysioNet BIDSleep~\cite{bidsleep} recopila señales fisiológicas tales como la frecuencia cardiaca instantánea 
 (IHR) y 3 ejes de acelerometría medidas con un Apple Watch a lo largo de 253 noches de 47 adultos sanos. Cada 
-lapso de 30 segundos se encuentra etiquetado, por dos fuentes diferentes, como una etapa del sueño: 
+lapso de 30 segundos se encuentra etiquetado, por dos fuentes diferentes, como una etapa del sueño:
 \{0:Wake, 1:$N_1$, 2:$N_2$, 3:$N_3$, 4:REM, 5:Unknown\}
+
+El experto define la variable objetivo (Dreem queda como referencia independiente) y se descarta
+la clase \emph{Unknown}. La partición es \textbf{por paciente} —evita \textit{leakage} y mide la
+generalización a sujetos nuevos—: del corpus válido ($\approx$208k épocas), $123\,495$/$37\,566$/$47\,427$
+en \emph{train}/\emph{val}/\emph{test} (29/8/10 pacientes) para los modelos tabulares y $33$/$7$/$7$
+sujetos para los secuenciales.
+
+Se emplean dos representaciones: una \textbf{tabular} de $122$ \textit{features} por época y la
+\textbf{señal cruda} $150\times4$ en secuencias por noche, ambas estandarizadas con estadísticos de
+\emph{train}; los modelos densos imputan a la mediana los \texttt{NaN} de borde. El IHR se muestrea a
+$\approx\!0.2$\,Hz (Nyquist $\approx\!0.1$\,Hz), por debajo de las bandas LF/HF ($0.04$--$0.4$\,Hz),
+que resultan inobservables.
+
+Antes de modelar se aplica un control de calidad noche a noche. Sobre cada noche se computan
+\textit{gaps} temporales en IHR y acelerometría ($>60$s entre muestras), duración de la señal y
+fracción de acelerometría inválida ($|\lVert a \rVert - 1| > 0.5g$), y se define la
+\textbf{ventana válida} como la intersección entre el rango etiquetado y el de IHR \emph{continua}.
+Los desajustes se clasifican en \textit{signal\_excess} (señal sin etiqueta, se recorta),
+\textit{label\_trunc} (etiqueta sin señal, se recorta) e \textit{internal\_gap} (huecos $>10$ min).
+Estos últimos, verificados como \textit{dropouts} reales del sensor, se resuelven recortando la
+cola si el prefijo limpio supera el 60\% o descartando la noche. Todo se aplica en memoria, sin
+alterar los archivos originales.
 
 \section{Metodología}
 
@@ -69,18 +123,6 @@ al pesar todas las etapas por igual es la métrica más honesta bajo el desbalan
 con la \textbf{accuracy} global y la \textbf{matriz de confusión}, que localiza entre qué etapas
 ocurren los errores.
 
-\subsection{Limpieza de señales}
-
-Antes de modelar se aplica un control de calidad noche a noche. Sobre cada noche se computan
-\textit{gaps} temporales en IHR y acelerometría ($>60$s entre muestras), duración de la señal y
-fracción de acelerometría inválida ($|\lVert a \rVert - 1| > 0.5g$), y se define la
-\textbf{ventana válida} como la intersección entre el rango etiquetado y el de IHR \emph{continua}.
-Los desajustes se clasifican en \textit{signal\_excess} (señal sin etiqueta, se recorta),
-\textit{label\_trunc} (etiqueta sin señal, se recorta) e \textit{internal\_gap} (huecos $>10$ min).
-Estos últimos, verificados como \textit{dropouts} reales del sensor, se resuelven recortando la
-cola si el prefijo limpio supera el 60\% o descartando la noche. Todo se aplica en memoria, sin
-alterar los archivos originales.
-
 \subsection{Elección de modelos}
 
 Como \textbf{baseline} se usa \textbf{XGBoost} sobre \textit{features} por época: modelo tabular
@@ -88,29 +130,50 @@ robusto, que maneja valores faltantes de forma nativa y da importancia interpret
 \textit{features} resumen IHR y HRV en el dominio temporal (RMSSD, pNN50, etc.) y la acelerometría
 sobre la magnitud $\lVert a \rVert$ —invariante a la orientación del reloj— e incorporan contexto
 inter-época (\textit{lags}, \textit{leads}, promedios móviles), clave en \textit{sleep staging}.
+Sobre esas mismas \textit{features} entrenamos además un \textbf{perceptrón multicapa (MLP)}, que
+contrasta una red densa contra los árboles con idéntico input (imputando los \texttt{NaN} de borde
+y estandarizando, pasos que XGBoost no requiere).
 
-Frente a él, una \textbf{CNN 1D} opera sobre la señal cruda, con la hipótesis de aprender la
+Frente a ellos, una \textbf{CNN 1D} opera sobre la señal cruda, con la hipótesis de aprender la
 dinámica temporal —incluida la variabilidad de alta frecuencia de la acelerometría que las
 \textit{features} manuales descartan— sin \textit{feature engineering}. Cada época se lleva a un
 tensor $150 \times 4$ (IHR interpolada y tres estadísticos por bin de $0.2$s de la magnitud
 invariante: media, desvío y ENMO), que tres bloques convolucionales
 (Conv1D--BatchNorm--ReLU--\textit{pooling}) más \textit{global average pooling} y un clasificador
-denso mapean a las cinco etapas; el desbalance se compensa ponderando la \textit{cross-entropy}
-por la frecuencia inversa de clase. En ambos casos la partición \textbf{agrupa por paciente} para
-evitar \textit{leakage} y medir generalización a sujetos nuevos, descartando \textit{Unknown}.
+denso mapean a las cinco etapas.
+
+Los modelos anteriores clasifican cada época de forma aislada, ignorando que el sueño es una
+secuencia con fuerte estructura temporal. Para capturarla usamos una \textbf{LSTM bidireccional
+(BiLSTM)}~\cite{hochreiter1997lstm,schuster1997bilstm} \emph{many-to-many}: procesa la noche
+completa como secuencia y emite una etapa por época. En cada paso $t$, la celda LSTM regula un
+estado de memoria $c_t$ mediante tres compuertas —entrada $i_t$, olvido $f_t$ y salida $o_t$—:
+\begin{equation}
+\begin{aligned}
+(i_t, f_t, o_t) &= \sigma\!\big(W_{\{i,f,o\}}\, x_t + U_{\{i,f,o\}}\, h_{t-1} + b_{\{i,f,o\}}\big)\\
+\tilde{c}_t &= \tanh(W_c x_t + U_c h_{t-1} + b_c)\\
+c_t &= f_t \odot c_{t-1} + i_t \odot \tilde{c}_t, \quad h_t = o_t \odot \tanh(c_t)
+\end{aligned}
+\label{eq:lstm}
+\end{equation}
+donde $\sigma$ es la sigmoide y $\odot$ el producto elemento a elemento. La variante
+\textbf{bidireccional} concatena una pasada hacia adelante y otra hacia atrás,
+$h_t = [\,\overrightarrow{h}_t \,;\, \overleftarrow{h}_t\,]$, de modo que cada época integra
+contexto pasado \emph{y} futuro (en \textit{sleep staging} \emph{offline} se dispone de la noche
+completa); un cabezal lineal da la predicción por época $\hat{y}_t = \mathrm{softmax}(W h_t + b)$.
+
+Por último, un \textbf{híbrido CNN--LSTM}, en la línea de SLAMSS~\cite{SLAMSS2023}, entrena ambos
+componentes \emph{end-to-end}: la CNN 1D actúa como \emph{encoder} intra-época —reemplaza la
+entrada $x_t$ de la BiLSTM por el vector que aprende de la señal cruda de cada época— y la BiLSTM
+modela la dinámica inter-época sobre esa secuencia.
+
+Todos los modelos neuronales se entrenan minimizando la \textit{cross-entropy} ponderada por
+clase, $\mathcal{L} = -\sum_c w_c\, y_c \log \hat{y}_c$ con $w_c \propto 1/f_c$, para compensar el
+desbalance. En todos los casos la partición \textbf{agrupa por paciente}, para evitar
+\textit{leakage} y medir la generalización a sujetos nuevos, descartando \textit{Unknown}.
 
 \section{Resultados}
 
 \subsection{Análisis exploratorio y calidad de datos}
-
-\begin{figure}[H]
-\centering
-\includegraphics[width=\linewidth]{figures/night-overview-0-1.png}
-\caption{Representación visual de una noche completa (Paciente 00, Noche 1)}
-\label{fig:nights}
-\end{figure}
-
-La Fig.~\ref{fig:nights} muestra las señales de una noche completa, donde se aprecia la estructura cíclica del sueño: la IHR desciende y se estabiliza en los tramos de sueño profundo ($N_3$) y se torna más variable en REM mientras que la acelerometría sólo registra actividad marcada en las transiciones a vigilia. Esta correspondencia entre la dinámica de las señales y el hipnograma es la que hace la tarea abordable a partir de datos de muñeca.
 
 La distribución de clases (Fig.~\ref{fig:stages}) está fuertemente desbalanceada: $N_2$ y Wake concentran la mayor parte de las épocas mientras que $N_1$ es marginal. Este desbalance justifica evaluar con $F1_{Macro}$, que pondera cada clase por igual, y compensar la frecuencia de clase durante el entrenamiento.
 
