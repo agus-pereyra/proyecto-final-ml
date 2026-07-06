@@ -16,6 +16,7 @@ from sklearn.model_selection import GroupShuffleSplit
 from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import StandardScaler
 from sklearn.utils.class_weight import compute_class_weight
+from sklearn.metrics import cohen_kappa_score
 
 # columnas de metadata / target que NO son features
 META_COLS = ['subject', 'night', 'epoch', 'label', 'dreem']
@@ -205,3 +206,61 @@ def predict(model, loader, device=None):
         preds.append(outputs.argmax(dim=1).cpu().numpy())
         ys.append(y_batch.numpy())
     return np.concatenate(ys), np.concatenate(preds)
+
+
+@torch.no_grad()
+def permutation_importance(model, csv_path=None, n_repeats=3, top=15,
+                           random_state=42, device=None):
+    '''
+    Importancia de features por PERMUTACIÓN sobre el test: baraja cada feature y
+    mide cuánto cae el Cohen's Kappa (caída grande = feature importante). Es el
+    análogo neuronal del feature importance del XGBoost. Reproduce el mismo split
+    y preprocesamiento que `get_dataloaders`. Devuelve [(feature, importancia)]
+    ordenado de mayor a menor (top N).
+    '''
+    if csv_path is None:
+        candidates = ['../data_extraction/epoch_features.csv', '../data/epoch_features.csv']
+        csv_path = next((p for p in candidates if os.path.exists(p)), candidates[0])
+
+    df = pd.read_csv(csv_path)
+    df = df[df['label'] != 5].reset_index(drop=True)
+    feature_cols = [c for c in df.columns if c not in META_COLS]
+    X = df[feature_cols].values
+    y = df['label'].values.astype(np.int64)
+    groups = df['subject'].values
+
+    # mismo split por paciente que get_dataloaders
+    gss = GroupShuffleSplit(n_splits=1, test_size=0.2, random_state=random_state)
+    dev_idx, test_idx = next(gss.split(X, y, groups))
+    tr_rel, _ = next(gss.split(X[dev_idx], y[dev_idx], groups[dev_idx]))
+    train_idx = dev_idx[tr_rel]
+
+    # mismo preprocesamiento (fiteado sólo en train)
+    imputer = SimpleImputer(strategy='median')
+    scaler = StandardScaler()
+    scaler.fit(imputer.fit_transform(X[train_idx]))
+    X_test = scaler.transform(imputer.transform(X[test_idx])).astype(np.float32)
+    y_test = y[test_idx]
+
+    device = device or torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    model = model.to(device).eval()
+
+    def kappa_of(Xmat):
+        logits = model(torch.tensor(Xmat, dtype=torch.float32, device=device))
+        return cohen_kappa_score(y_test, logits.argmax(1).cpu().numpy())
+
+    base = kappa_of(X_test)
+    rng = np.random.default_rng(random_state)
+    imp = np.zeros(len(feature_cols))
+    for j in range(X_test.shape[1]):
+        drops = []
+        for _ in range(n_repeats):
+            Xp = X_test.copy()
+            col = Xp[:, j].copy()
+            rng.shuffle(col)
+            Xp[:, j] = col
+            drops.append(base - kappa_of(Xp))
+        imp[j] = float(np.mean(drops))
+
+    order = np.argsort(imp)[::-1][:top]
+    return [(feature_cols[j], imp[j]) for j in order]
