@@ -79,8 +79,8 @@ noche completa (Paciente 00, Noche 1).}
 
 \section{Conjunto de Datos y Características}
 
-PhysioNet BIDSleep~\cite{bidsleep} recopila señales fisiológicas tales como la frecuencia cardiaca instantánea 
-(IHR) y 3 ejes de acelerometría medidas con un Apple Watch a lo largo de 253 noches de 47 adultos sanos. Cada 
+PhysioNet BIDSleep~\cite{bidsleep} recopila señales fisiológicas tales como la frecuencia cardíaca instantánea
+(IHR) y tres ejes de acelerometría medidas con un Apple Watch a lo largo de 253 noches de 47 adultos sanos. Cada 
 lapso de 30 segundos se encuentra etiquetado, por dos fuentes diferentes, como una etapa del sueño:
 \{0:Wake, 1:$N_1$, 2:$N_2$, 3:$N_3$, 4:REM, 5:Unknown\}
 
@@ -131,7 +131,7 @@ robusto, que maneja valores faltantes de forma nativa y da importancia interpret
 sobre la magnitud $\lVert a \rVert$ —invariante a la orientación del reloj— e incorporan contexto
 inter-época (\textit{lags}, \textit{leads}, promedios móviles), clave en \textit{sleep staging}.
 Sobre esas mismas \textit{features} entrenamos además un \textbf{perceptrón multicapa (MLP)}, que
-contrasta una red densa contra los árboles con idéntico input (imputando los \texttt{NaN} de borde
+contrasta una red densa con los árboles con idéntica entrada (imputando los \texttt{NaN} de borde
 y estandarizando, pasos que XGBoost no requiere).
 
 Frente a ellos, una \textbf{CNN 1D} opera sobre la señal cruda, con la hipótesis de aprender la
@@ -175,36 +175,52 @@ desbalance. En todos los casos la partición \textbf{agrupa por paciente}, para 
 
 \subsection{Análisis exploratorio y calidad de datos}
 
-La distribución de clases (Fig.~\ref{fig:stages}) está fuertemente desbalanceada: $N_2$ y Wake concentran la mayor parte de las épocas mientras que $N_1$ es marginal. Este desbalance justifica evaluar con $F1_{Macro}$, que pondera cada clase por igual, y compensar la frecuencia de clase durante el entrenamiento.
+La distribución de clases está fuertemente desbalanceada: $N_2$ ($37.5\%$) y REM ($25.9\%$)
+concentran la mayor parte de las épocas, seguidas de $N_3$ ($18.5\%$) y Wake ($11.0\%$), mientras
+que $N_1$ es marginal ($7.1\%$). Este desbalance justifica evaluar con $F1_{Macro}$, que pondera
+cada clase por igual, y compensar la frecuencia de clase durante el entrenamiento.
 
 \begin{figure}[H]
 \centering
-\includegraphics[width=\linewidth]{figures/problematic-nights-overview.png}
-\caption{Noches con pérdida de labels o \textit{gaps} internos: en verde la ventana válida; en
-naranja los labels recortados; en rojo los \textit{gaps}.}
+\includegraphics[width=1.1\linewidth]{figures/crudavsprocesada1.png}
+\caption{}
 \label{fig:problematic}
 \end{figure}
 
-El control de calidad (Fig.~\ref{fig:problematic}) revela que \textbf{228 de 253 noches} (90.1\%)
-requieren alguna modificación —en su mayoría el trivial \textit{signal\_excess}— y que sólo 4
-presentan \textit{internal\_gap}. La figura ilustra cómo la ventana válida (verde) recupera el
-tramo aprovechable de cada noche, descartando los labels sin señal (naranja) y los huecos internos
-(rojo) que romperían la continuidad temporal.
-
+El control de calidad (Fig.~\ref{fig:problematic}) revela que \textbf{229 de 253 noches} (90.5\%)
+requieren alguna modificación —en su mayoría el trivial \textit{signal\_excess}— y que, al acotar
+la ventana válida por ambas señales (IHR y acelerometría), sólo \textbf{1} noche conserva un
+\textit{internal\_gap} genuino (P42 N4), que se descarta entera. La figura ilustra el procesamiento en una noche con \textit{gaps} (P20 N1):
+la ventana válida (verde) conserva el tramo aprovechable mientras se recorta la cola donde la
+acelerometría se interrumpe y aparecen \textit{gaps} de señal (rojo), y el hipnograma procesado descarta
+esas épocas del final.
+\vspace{-1.2em}
 \begin{figure}[H]
 \centering
 \includegraphics[width=\linewidth]{figures/label-confusion-matrix.png}
 \caption{Matriz de confusión experto vs.\ Dreem; el desacuerdo se concentra en etapas adyacentes.}
 \label{fig:cm-expert-dreem}
 \end{figure}
+\vspace{-1em}
 
 El acuerdo entre las dos fuentes de etiquetado (Ec.~\ref{eq:cohen-kappa}) fija el techo de la
-tarea: $\kappa = 0.74$ global, máximo en REM ($0.85$) y menor en Wake ($0.70$). Su matriz de
+tarea: $\kappa = 0.74$ global, máximo en $N_3$ ($0.90$) y REM ($0.85$) y mínimo en $N_1$ ($0.13$),
+la etapa más fugaz y ambigua. Su matriz de
 confusión (Fig.~\ref{fig:cm-expert-dreem}) muestra que el desacuerdo entre el experto y Dreem se
 concentra en etapas contiguas ($N_1$ vs.\ $N_2$ y Wake), las transiciones intrínsecamente más
 ambiguas de discriminar.
 
 \subsection{Clasificación}
+
+Los hiperparámetros de cada modelo se ajustan mediante \textbf{optimización bayesiana}: en lugar de
+una búsqueda exhaustiva (\textit{grid search}) o aleatoria, se construye un modelo sustituto
+probabilístico de la métrica objetivo en función de los hiperparámetros y, en cada iteración, una
+función de adquisición propone la configuración más prometedora, equilibrando exploración y
+explotación. El objetivo optimizado es el $F1_{Macro}$ sobre la partición de
+\emph{validación} —\textbf{agrupada por paciente}, igual que el resto del \textit{pipeline}, para no
+introducir \textit{leakage} en la selección— y la configuración ganadora se reentrena sobre
+\emph{train} y se reporta una única vez sobre \emph{test}. El espacio de búsqueda por modelo, el
+número de iteraciones y los valores finales seleccionados se detallan en la Tabla~\ref{tab:resultados}.
 
 El baseline XGBoost alcanza $F1_{Macro} = 0.47$ y $\kappa = 0.38$
 (Ec.~\ref{eq:cohen-kappa}) frente al experto, con \textit{accuracy} del 55\%
