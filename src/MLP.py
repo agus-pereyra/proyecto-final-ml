@@ -125,7 +125,7 @@ def get_dataloaders(csv_path=None, batch_size=256, random_state=42, weight_mode=
 
 def train_model(model, train_loader, val_loader, class_weights,
                 epochs=100, lr=1e-3, patience=12, weight_decay=1e-4,
-                model_path='../data_extraction/best_mlp.pth'):
+                model_path=None):
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = model.to(device)
@@ -136,10 +136,7 @@ def train_model(model, train_loader, val_loader, class_weights,
     optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', patience=5, factor=0.5)
 
-    model_dir = os.path.dirname(model_path)
-    if model_dir:
-        os.makedirs(model_dir, exist_ok=True)
-
+    best_state = None
     best_val_loss = float('inf')
     early_stop_counter = 0
     history = {'train_loss': [], 'val_loss': [], 'val_acc': []}
@@ -183,14 +180,15 @@ def train_model(model, train_loader, val_loader, class_weights,
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             early_stop_counter = 0
-            torch.save(model.state_dict(), model_path)
+            best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
         else:
             early_stop_counter += 1
             if early_stop_counter >= patience:
                 print(f"Early stopping en epoch {epoch+1}.")
                 break
 
-    model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
+    if best_state is not None:
+        model.load_state_dict(best_state)
     return model, history
 
 
