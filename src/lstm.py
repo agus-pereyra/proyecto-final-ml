@@ -1,6 +1,7 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 import random
+import tempfile
 
 import numpy as np
 import pandas as pd
@@ -58,6 +59,7 @@ class ConfigLSTM:
     use_class_weights: bool = True
     amp: bool = None  # mixed precision; None -> se activa solo si device=='cuda'
     patience: int = None  # early stopping: corta si el kappa de val no mejora en N epochs; None -> sin ES
+    refit_trainval: bool = False  # True: entrena con train+val (sin val ni early stopping); lo usa la fase 2 de train_final
 
     # split por sujeto (sujetos disjuntos), fracciones sobre el total de sujetos
     val_frac: float = 0.15
@@ -274,11 +276,27 @@ def _collapse4(y):
     '''Colapsa etiquetas de 5 a 4 clases (Wake / Light=N1+N2 / Deep=N3 / REM) vía COLLAPSE_4.'''
     return np.vectorize(COLLAPSE_4.get)(y)
 
+def collapse4_labels(y):
+    '''Colapsa etiquetas [N] de 5 a 4 clases (Wake/Light/Deep/REM) — alias público de _collapse4.'''
+    return _collapse4(y)
+
+def collapse4_scores(y_score):
+    '''
+    Colapsa una matriz de probabilidades [N, 5] (Wake/N1/N2/N3/REM) a [N, 4]
+    (Wake / Light=N1+N2 / Deep=N3 / REM) sumando las columnas de cada grupo.
+    Deja las curvas ROC/PR one-vs-rest alineadas con la vista de 4 clases.
+    '''
+    y_score = np.asarray(y_score)
+    out = np.zeros((y_score.shape[0], 4), dtype=y_score.dtype)
+    for src_k, dst_k in COLLAPSE_4.items():
+        out[:, dst_k] += y_score[:, src_k]
+    return out
+
 def compute_metrics(y_true, y_pred):
     '''
     Métricas por época sobre las predicciones ya filtradas (sin padding ni Unknown).
-    Devuelve un dict con kappa (principal), macro F1, accuracy y matriz de confusión
-    a 5 clases, más sus versiones colapsadas a 4 (Wake/Light/Deep/REM, SLAMSS-IFS).
+    Devuelve un dict con kappa (principal), macro/micro F1, accuracy y matriz de
+    confusión a 5 clases, más sus versiones colapsadas a 4 (Wake/Light/Deep/REM).
     '''
     y_true = np.asarray(y_true)
     y_pred = np.asarray(y_pred)
@@ -286,12 +304,14 @@ def compute_metrics(y_true, y_pred):
     m = {
         'kappa': cohen_kappa_score(y_true, y_pred),
         'macro_f1': f1_score(y_true, y_pred, average='macro', labels=range(N_CLASSES)),
+        'micro_f1': f1_score(y_true, y_pred, average='micro', labels=range(N_CLASSES)),
         'accuracy': accuracy_score(y_true, y_pred),
         'confusion': confusion_matrix(y_true, y_pred, labels=range(N_CLASSES)),
     }
     t4, p4 = _collapse4(y_true), _collapse4(y_pred)
     m['kappa_4'] = cohen_kappa_score(t4, p4)
     m['macro_f1_4'] = f1_score(t4, p4, average='macro', labels=range(4))
+    m['micro_f1_4'] = f1_score(t4, p4, average='micro', labels=range(4))
     m['accuracy_4'] = accuracy_score(t4, p4)
     m['confusion_4'] = confusion_matrix(t4, p4, labels=range(4))
     return m
@@ -370,6 +390,8 @@ def make_loaders(cfg: ConfigLSTM):
     cfg.input_size = len(feature_cols)
 
     splits, subj = split_subjects(df, cfg)
+    if cfg.refit_trainval:                        # fase 2: val se pliega al train (sin held-out)
+        splits['train'] = pd.concat([splits['train'], splits['val']], ignore_index=True)
     mean, std = feature_stats(splits['train'], feature_cols)
 
     loaders = {}
@@ -398,6 +420,8 @@ def make_hybrid_loaders(cfg: ConfigLSTM):
     pid = lambda f: int(f.stem.replace('Bidslab', ''))
     subj = partition_subjects(np.array(sorted({pid(f) for f in files})), cfg)
     split_files = {name: [f for f in files if pid(f) in s] for name, s in subj.items()}
+    if cfg.refit_trainval:                        # fase 2: val se pliega al train (sin held-out)
+        split_files['train'] = split_files['train'] + split_files['val']
 
     mean, std = channel_stats(split_files['train'])
     loaders = {}
@@ -508,6 +532,19 @@ def train(cfg: ConfigLSTM, encoder: EpochEncoder = None, epoch_callback=None, ve
             n += feats.shape[0]
 
         train_loss = total / max(n, 1)
+
+        # fase 2 (refit train+val): sin val ni early stopping; guarda el último epoch y sigue.
+        if cfg.refit_trainval:
+            history.append({'epoch': epoch, 'train_loss': train_loss})
+            torch.save({
+                'model_state': model.state_dict(),
+                'config': cfg,
+                'mean': mean, 'std': std, 'subj': subj,
+                'val_kappa': float('nan'), 'epoch': epoch,
+            }, cfg.ckpt_path)
+            pbar.set_postfix({'train_loss': f'{train_loss:.4f}'})
+            continue
+
         val_loss, y_val, p_val = evaluate_loader(model, loaders['val'], criterion, device, use_amp)
         val_m = compute_metrics(y_val, p_val)
         history.append({'epoch': epoch, 'train_loss': train_loss, 'val_loss': val_loss,
@@ -553,6 +590,36 @@ def train(cfg: ConfigLSTM, encoder: EpochEncoder = None, epoch_callback=None, ve
         print(f'  kappa {test_m["kappa"]:.4f} | macroF1 {test_m["macro_f1"]:.4f} | acc {test_m["accuracy"]:.4f}')
         print(f'  4-clases: kappa {test_m["kappa_4"]:.4f} | macroF1 {test_m["macro_f1_4"]:.4f} | acc {test_m["accuracy_4"]:.4f}')
     return model, history, test_m
+
+
+def train_final(cfg: ConfigLSTM, encoder: EpochEncoder = None, verbose=True):
+    '''
+    Entrenamiento FINAL en dos fases (test NUNCA se toca):
+      - Fase 1: `train()` normal (entrena con train, valida con val, early stopping) sobre un
+        checkpoint TEMPORAL -> `best_epoch` = época del mejor kappa de val + curvas train/val.
+      - Fase 2: reentrena de cero sobre **train+val** (`refit_trainval=True`) por exactamente
+        `best_epoch` epochs (sin val ni early stopping), guarda en `cfg.ckpt_path` y evalúa en test.
+
+    El nº de epochs del refit no se fija a mano: lo dicta la validación de la fase 1 (mismo criterio
+    con que el search elige el modelo). Reportar test sigue siendo honesto: val solo se usa para
+    elegir el presupuesto de epochs (como cualquier hiperparámetro), nunca test.
+
+    Devuelve (model_refit, history_fase1, test_metrics_refit). `history_fase1` alimenta las curvas
+    train/val; `test_metrics` sale del modelo reentrenado con train+val.
+    '''
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_ckpt = str(Path(tmp) / 'phase1.pt')
+        cfg_p1 = replace(cfg, ckpt_path=tmp_ckpt, refit_trainval=False)
+        _, hist1, _ = train(cfg_p1, encoder=encoder, verbose=verbose)
+        best_epoch = torch.load(tmp_ckpt, map_location='cpu', weights_only=False)['epoch']
+
+    if verbose:
+        modo = 'híbrido CNN1D->BiLSTM' if cfg.hybrid else 'LSTM tabular'
+        print(f'\n[refit {modo}] fase 2: reentreno sobre train+val por {best_epoch} epochs '
+              f'(mejor epoch de val en fase 1)')
+    cfg_p2 = replace(cfg, refit_trainval=True, epochs=best_epoch, patience=None)
+    model, _, test_m = train(cfg_p2, encoder=encoder, verbose=verbose)
+    return model, hist1, test_m
 
 
 def evaluate(cfg: ConfigLSTM, encoder: EpochEncoder = None):

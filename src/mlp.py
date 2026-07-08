@@ -12,14 +12,33 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
-from sklearn.model_selection import GroupShuffleSplit
 from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import StandardScaler
 from sklearn.utils.class_weight import compute_class_weight
 from sklearn.metrics import cohen_kappa_score
 
+try:
+    from lstm import ConfigLSTM, partition_subjects
+except ImportError:
+    from src.lstm import ConfigLSTM, partition_subjects
+
 # columnas de metadata / target que NO son features
 META_COLS = ['subject', 'night', 'epoch', 'label', 'dreem']
+
+
+def _trainval_test_idx(df, cfg=None):
+    '''
+    Índices (train+val, test) con el MISMO split por sujeto que `model.ipynb`
+    (`partition_subjects` sobre `ConfigLSTM`, misma seed y fracciones). Como el baseline
+    NO hace búsqueda de hiperparámetros, train y val se **unen**: los modelos entrenan con
+    train+val y se miden en test (mismo test set que los modelos secuenciales).
+    '''
+    cfg = cfg or ConfigLSTM()
+    subj = partition_subjects(df['subject'].unique(), cfg)
+    trainval = subj['train'] | subj['val']
+    tv_idx = np.where(df['subject'].isin(trainval).to_numpy())[0]
+    test_idx = np.where(df['subject'].isin(subj['test']).to_numpy())[0]
+    return tv_idx, test_idx
 
 
 class TabularDataset(Dataset):
@@ -56,13 +75,14 @@ class MLP(nn.Module):
         return self.net(x)
 
 
-def get_dataloaders(csv_path=None, batch_size=256, random_state=42, weight_mode='sqrt'):
+def get_dataloaders(csv_path=None, batch_size=256, weight_mode='sqrt', cfg=None):
     '''
-    Lee el CSV de features, descarta Unknown (clase 5), particiona por paciente
-    (dev/test 80/20 y dev -> train/val 80/20), imputa NaN + estandariza (fiteado
-    sólo en train) y arma los DataLoaders. Devuelve los pesos de clase, las
-    etiquetas de Dreem del test (para comparar) y la dimensión de entrada. Si
-    `csv_path` es None, busca el CSV en `data_extraction/` y `data/`.
+    Lee el CSV de features, descarta Unknown (clase 5), particiona por paciente con el
+    MISMO split que `model.ipynb` (`_trainval_test_idx`), imputa NaN + estandariza
+    (fiteado sobre train+val) y arma los DataLoaders. Como el baseline no hace búsqueda de
+    hiperparámetros, **no hay val**: se entrena con **train+val** y se mide en **test**.
+    Devuelve (train_loader, test_loader, pesos de clase, etiquetas de Dreem del test,
+    dimensión de entrada). Si `csv_path` es None, busca el CSV en `data_extraction/` y `data/`.
 
     `weight_mode` controla los pesos de clase de la loss:
     - 'balanced': pesos proporcionales a 1/frecuencia (maximiza F1-macro, pero
@@ -82,28 +102,20 @@ def get_dataloaders(csv_path=None, batch_size=256, random_state=42, weight_mode=
     feature_cols = [c for c in df.columns if c not in META_COLS]
     X = df[feature_cols].values
     y = df['label'].values.astype(np.int64)
-    groups = df['subject'].values
     dreem = df['dreem'].values
 
-    # partición por paciente para evitar fuga de información (las épocas de una
-    # misma noche están muy correlacionadas)
-    gss = GroupShuffleSplit(n_splits=1, test_size=0.2, random_state=random_state)
-    dev_idx, test_idx = next(gss.split(X, y, groups))
-    tr_rel, val_rel = next(gss.split(X[dev_idx], y[dev_idx], groups[dev_idx]))
-    train_idx, val_idx = dev_idx[tr_rel], dev_idx[val_rel]
-
-    X_train, y_train = X[train_idx], y[train_idx]
-    X_val, y_val = X[val_idx], y[val_idx]
+    # mismo split por sujeto que model.ipynb; train+val juntos (sin búsqueda -> sin val)
+    tv_idx, test_idx = _trainval_test_idx(df, cfg)
+    X_train, y_train = X[tv_idx], y[tv_idx]
     X_test, y_test = X[test_idx], y[test_idx]
     dreem_test = dreem[test_idx]
 
     # los _lag/_lead/_delta/_rmean/_rstd tienen NaN en los bordes de cada noche;
     # una red densa no los maneja como XGBoost, así que se imputan con la mediana
-    # y luego se estandariza. Ambos fiteados sólo en train.
+    # y luego se estandariza. Ambos fiteados sobre train+val.
     imputer = SimpleImputer(strategy='median')
     scaler = StandardScaler()
     X_train = scaler.fit_transform(imputer.fit_transform(X_train))
-    X_val = scaler.transform(imputer.transform(X_val))
     X_test = scaler.transform(imputer.transform(X_test))
 
     balanced = compute_class_weight('balanced', classes=np.arange(5), y=y_train)
@@ -117,23 +129,28 @@ def get_dataloaders(csv_path=None, batch_size=256, random_state=42, weight_mode=
         raise ValueError(f"weight_mode inválido: {weight_mode!r} (usar 'balanced', 'sqrt' o 'none')")
 
     train_loader = DataLoader(TabularDataset(X_train, y_train), batch_size=batch_size, shuffle=True)
-    val_loader = DataLoader(TabularDataset(X_val, y_val), batch_size=batch_size, shuffle=False)
     test_loader = DataLoader(TabularDataset(X_test, y_test), batch_size=batch_size, shuffle=False)
 
-    print(f"Features: {len(feature_cols)} | train: {len(y_train)}  val: {len(y_val)}  test: {len(y_test)}")
+    print(f"Features: {len(feature_cols)} | train+val: {len(y_train)}  test: {len(y_test)}")
     print(f"Class weights ({weight_mode}): { {i: round(float(w), 3) for i, w in enumerate(weights)} }")
 
-    return train_loader, val_loader, test_loader, weights, dreem_test, len(feature_cols)
+    return train_loader, test_loader, weights, dreem_test, len(feature_cols)
 
 
-def train_model(model, train_loader, val_loader, class_weights,
+def train_model(model, train_loader, class_weights, val_loader=None,
                 epochs=100, lr=1e-3, patience=12, weight_decay=1e-4,
                 model_path=None):
     '''
-    Entrena el MLP (Adam + CrossEntropy ponderada por clase, `ReduceLROnPlateau` y
-    early stopping sobre la val loss, restaurando el mejor epoch).
-    In:  model, train_loader, val_loader, class_weights [5]; epochs/lr/patience/... opc.
-    Out: (model entrenado, history) con history = train_loss/val_loss/val_acc por epoch.
+    Entrena el MLP (Adam + CrossEntropy ponderada por clase + `ReduceLROnPlateau`).
+
+    - Con `val_loader`: valida cada epoch, `ReduceLROnPlateau`/early stopping sobre la val
+      loss y restaura el mejor epoch (modo con held-out).
+    - Sin `val_loader` (baseline: entrena con train+val, sin búsqueda de hiperparámetros):
+      corre las `epochs` fijas, sin early stopping, con el scheduler sobre la train loss y
+      quedándose con el modelo del último epoch.
+
+    Out: (model entrenado, history) con history = train_loss/val_loss/val_acc por epoch
+    (val_* vacío en el modo sin val).
     '''
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = model.to(device)
@@ -161,6 +178,13 @@ def train_model(model, train_loader, val_loader, class_weights,
             optimizer.step()
             train_loss += loss.item()
         train_loss /= len(train_loader)
+        history['train_loss'].append(train_loss)
+
+        # sin val: entrena epochs fijas, scheduler sobre train loss, sin early stopping.
+        if val_loader is None:
+            scheduler.step(train_loss)
+            print(f"Epoch {epoch+1:3d} | Train Loss: {train_loss:.4f}")
+            continue
 
         model.eval()
         val_loss = 0.0
@@ -178,7 +202,6 @@ def train_model(model, train_loader, val_loader, class_weights,
         val_acc = correct / total
 
         scheduler.step(val_loss)
-        history['train_loss'].append(train_loss)
         history['val_loss'].append(val_loss)
         history['val_acc'].append(val_acc)
 
@@ -221,8 +244,8 @@ def permutation_importance(model, csv_path=None, n_repeats=3, top=15,
     Importancia de features por PERMUTACIÓN sobre el test: baraja cada feature y
     mide cuánto cae el Cohen's Kappa (caída grande = feature importante). Es el
     análogo neuronal del feature importance del XGBoost. Reproduce el mismo split
-    y preprocesamiento que `get_dataloaders`. Devuelve [(feature, importancia)]
-    ordenado de mayor a menor (top N).
+    y preprocesamiento que `get_dataloaders` (train+val vs test). Devuelve
+    [(feature, importancia)] ordenado de mayor a menor (top N).
     '''
     if csv_path is None:
         candidates = ['../data_extraction/epoch_features.csv', '../data/epoch_features.csv']
@@ -233,18 +256,14 @@ def permutation_importance(model, csv_path=None, n_repeats=3, top=15,
     feature_cols = [c for c in df.columns if c not in META_COLS]
     X = df[feature_cols].values
     y = df['label'].values.astype(np.int64)
-    groups = df['subject'].values
 
-    # mismo split por paciente que get_dataloaders
-    gss = GroupShuffleSplit(n_splits=1, test_size=0.2, random_state=random_state)
-    dev_idx, test_idx = next(gss.split(X, y, groups))
-    tr_rel, _ = next(gss.split(X[dev_idx], y[dev_idx], groups[dev_idx]))
-    train_idx = dev_idx[tr_rel]
+    # mismo split por paciente que get_dataloaders (train+val vs test)
+    tv_idx, test_idx = _trainval_test_idx(df)
 
-    # mismo preprocesamiento (fiteado sólo en train)
+    # mismo preprocesamiento (fiteado sobre train+val)
     imputer = SimpleImputer(strategy='median')
     scaler = StandardScaler()
-    scaler.fit(imputer.fit_transform(X[train_idx]))
+    scaler.fit(imputer.fit_transform(X[tv_idx]))
     X_test = scaler.transform(imputer.transform(X[test_idx])).astype(np.float32)
     y_test = y[test_idx]
 

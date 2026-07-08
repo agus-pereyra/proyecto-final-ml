@@ -40,7 +40,6 @@ def default_space(trial: optuna.Trial, hybrid: bool) -> dict:
     Espacio de búsqueda default. Devuelve un dict de hiperparámetros para `replace` sobre
     la config base. El híbrido agrega `feature_dim` (dimensión de salida del CNNEpochEncoder).
     '''
-    # num_layers arranca en 2: con 1 capa rindió consistentemente peor en ambos modelos (search).
     params = {
         'hidden_size': trial.suggest_categorical('hidden_size', choices=[64, 128, 256]),
         'num_layers': trial.suggest_int('num_layers', low=2, high=3),
@@ -50,8 +49,7 @@ def default_space(trial: optuna.Trial, hybrid: bool) -> dict:
         'batch_size': trial.suggest_categorical('batch_size', choices=[4, 8, 16]),
     }
     if hybrid:
-        # feature_dim sin 64: el 256 (y en menor medida 128) dominaron el top del híbrido.
-        params['feature_dim'] = trial.suggest_categorical('feature_dim', choices=[128, 256])
+        params['feature_dim'] = trial.suggest_categorical('feature_dim', choices=[64, 128, 256])
     return params
 
 def run_search(base_cfg: ConfigLSTM, name: str, n_trials: int, space=default_space,

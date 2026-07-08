@@ -1,7 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.metrics import (
-    cohen_kappa_score, accuracy_score, classification_report,
+    cohen_kappa_score, accuracy_score, f1_score, classification_report,
     confusion_matrix, ConfusionMatrixDisplay,
     roc_curve, auc, precision_recall_curve, average_precision_score,
 )
@@ -32,7 +32,10 @@ def print_metrics(y_true, y_pred, class_names=None, name=''):
         print(name)
     print(classification_report(y_true, y_pred, labels=labels,
                                 target_names=class_names, zero_division=0))
-    print(f"Cohen's Kappa: {cohen_kappa_score(y_true, y_pred):.3f}")
+    print(f"Cohen's Kappa:  {cohen_kappa_score(y_true, y_pred):.3f}")
+    print(f"F1 macro:       {f1_score(y_true, y_pred, labels=labels, average='macro', zero_division=0):.3f}")
+    print(f"F1 micro:       {f1_score(y_true, y_pred, labels=labels, average='micro', zero_division=0):.3f}")
+    print(f"Accuracy:       {accuracy_score(y_true, y_pred):.3f}")
 
 
 def plot_confusion(y_true, y_pred, class_names=None, title='Matriz de confusión',
@@ -58,6 +61,8 @@ def plot_confusion(y_true, y_pred, class_names=None, title='Matriz de confusión
               values_format='.2f' if normalize else 'd')
     ax.set_title(title)
     fig.tight_layout()
+    ax.set_ylabel('expert label')
+    ax.set_xlabel('predicted label')
     return fig, ax
 
 def cohen_kappa_per_class(y_true, y_pred, n_classes=6):
@@ -90,25 +95,32 @@ def roc_pr_curves(y_true, y_score, class_names=None, title='', figsize=(13, 5)):
 
     fig, (ax_roc, ax_pr) = plt.subplots(1, 2, figsize=figsize)
 
+    aucs, aps = [], []
     for i, name in enumerate(class_names):
         if y_bin[:, i].sum() == 0:      # sin positivos: la clase no aparece en y_true
             continue
         fpr, tpr, _ = roc_curve(y_bin[:, i], y_score[:, i])
-        ax_roc.plot(fpr, tpr, label=f'{name} (AUC={auc(fpr, tpr):.2f})')
+        roc_auc = auc(fpr, tpr)
+        aucs.append(roc_auc)
+        ax_roc.plot(fpr, tpr, label=f'{name} (AUC={roc_auc:.2f})')
 
         prec, rec, _ = precision_recall_curve(y_bin[:, i], y_score[:, i])
         ap = average_precision_score(y_bin[:, i], y_score[:, i])
+        aps.append(ap)
         ax_pr.plot(rec, prec, label=f'{name} (AP={ap:.2f})')
+
+    macro_auc = float(np.mean(aucs)) if aucs else float('nan')
+    macro_ap = float(np.mean(aps)) if aps else float('nan')
 
     ax_roc.plot([0, 1], [0, 1], 'k--', lw=1, label='azar')
     ax_roc.set_xlabel('Tasa de falsos positivos')
     ax_roc.set_ylabel('Tasa de verdaderos positivos')
-    ax_roc.set_title('Curvas ROC (one-vs-rest)')
+    ax_roc.set_title(f'Curvas ROC (one-vs-rest) — AUC macro={macro_auc:.3f}')
     ax_roc.legend(loc='lower right', fontsize=9)
 
     ax_pr.set_xlabel('Recall')
     ax_pr.set_ylabel('Precision')
-    ax_pr.set_title('Curvas Precision-Recall (one-vs-rest)')
+    ax_pr.set_title(f'Curvas Precision-Recall (one-vs-rest) — AP macro={macro_ap:.3f}')
     ax_pr.legend(loc='upper right', fontsize=9)
 
     if title:
