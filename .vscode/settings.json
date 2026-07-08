@@ -92,6 +92,12 @@
     "latex-workshop.synctex.afterBuild.enabled": true,
     "latex-workshop.latex.recipes": [
         {
+            "name": "IEEE (pdfLaTeX)",
+            "tools": [
+                "latexmk"
+            ]
+        },
+        {
             "name": "latexmk",
             "tools": [
                 "latexmk"
@@ -133,7 +139,7 @@
             ]
         }
     ],
-    "latex-workshop.latex.recipe.default": "xelatexmk",
+    "latex-workshop.latex.recipe.default": "first",
     "latex-workshop.latex.clean.args": [
         "-c",
         "%TEX%"

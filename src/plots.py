@@ -40,8 +40,8 @@ def _draw_night_overview(night_data: pd.DataFrame, fontsize_scale: float = 1.0):
     stage_legend_fs = 12 * fontsize_scale
 
     # ejes: IHR, frecuencia instantánea del IHR (más bajo), acelerometría, expert, dreem
-    fig, ax = plt.subplots(5, 1, figsize=(14, 8.4), sharex=True,
-                           gridspec_kw={'height_ratios': [3, 0.9, 3, 0.6, 0.6]})
+    fig, ax = plt.subplots(5, 1, figsize=(14, 8), sharex=True,
+                           gridspec_kw={'height_ratios': [2, 0.9, 2, 0.6, 0.6]})
 
     # eje x en horas, comenzando desde 0
     t_min = min(hr['Timestamp'].min(), motion['Timestamp'].min())
@@ -67,12 +67,13 @@ def _draw_night_overview(night_data: pd.DataFrame, fontsize_scale: float = 1.0):
     ax[2].plot(motion_hours, motion['y'], label='y', color='tab:green')
     ax[2].plot(motion_hours, motion['z'], label='z', color='tab:blue')
 
-    ax[0].set_ylabel('IHR [bpm]', fontsize=label_fs)
-    ax[1].set_ylabel('IHR Freq [Hz]', fontsize=label_fs)
-    ax[2].set_ylabel('Accelerometry [g]', fontsize=label_fs)
-    ax[0].tick_params(axis='both', labelsize=tick_fs)
-    ax[1].tick_params(axis='both', labelsize=tick_fs)
-    ax[2].tick_params(axis='both', labelsize=tick_fs)
+    ax[0].set_ylabel('IHR\n[bpm]', fontsize=label_fs, rotation=0, ha='right', va='center', labelpad=2)
+    ax[1].set_ylabel('IHR\nFreq [Hz]', fontsize=label_fs, rotation=0, ha='right', va='center', labelpad=2)
+    ax[2].set_ylabel('Accel [g]', fontsize=label_fs, rotation=0, ha='right', va='center', labelpad=2)
+    # yticks del lado derecho; el ylabel queda pegado al eje (spine izquierda)
+    ax[0].tick_params(axis='both', labelsize=tick_fs, left=False, labelleft=False, right=True, labelright=True)
+    ax[1].tick_params(axis='both', labelsize=tick_fs, left=False, labelleft=False, right=True, labelright=True)
+    ax[2].tick_params(axis='both', labelsize=tick_fs, left=False, labelleft=False, right=True, labelright=True)
 
     epoch_len = 30  # segundos
     # recStart en hora local (America/New_York); hr/motion en Unix/UTC
@@ -90,11 +91,11 @@ def _draw_night_overview(night_data: pd.DataFrame, fontsize_scale: float = 1.0):
 
     ax[3].set_yticks([])
     ax[3].tick_params(axis='both', labelsize=tick_fs)
-    ax[3].set_ylabel('Expert', fontsize=label_fs)
+    ax[3].set_ylabel('Expert', fontsize=label_fs, rotation=0, ha='right', va='center', labelpad=2)
 
     ax[4].set_yticks([])
     ax[4].tick_params(axis='both', labelsize=tick_fs)
-    ax[4].set_ylabel('Dreem', fontsize=label_fs)
+    ax[4].set_ylabel('Dreem', fontsize=label_fs, rotation=0, ha='right', va='center', labelpad=2)
 
     legend_patches = [mpatches.Patch(color=c, label=STAGE_NAMES[s]) for s, c in STAGE_COLORS.items()]
     ax[4].legend(handles=legend_patches, loc='upper center', bbox_to_anchor=(0.5, -1.6), ncol=6, fontsize=stage_legend_fs)
@@ -118,7 +119,7 @@ def _draw_night_overview(night_data: pd.DataFrame, fontsize_scale: float = 1.0):
     return fig
 
 def night_overview(night_data: pd.DataFrame, patient_nr: int = None, night_nr: int = None):
-    save_fig = _draw_night_overview(night_data, fontsize_scale=1.1)
+    save_fig = _draw_night_overview(night_data, fontsize_scale=1.5)
     file_name = f'night-overview-{patient_nr}-{night_nr}' if (patient_nr is not None and night_nr is not None) else 'night-overview'
     save_fig.savefig(FIG_DIR / f'{file_name}.png')
     plt.close(save_fig)
@@ -216,7 +217,7 @@ def night_prediction_overview(patient: int, night: int, predictions: dict, save:
         fig.savefig(FIG_DIR / f'night-predictions-{patient}-{night}.png', dpi=200, bbox_inches='tight')
     plt.show()
 
-def _raw_vs_clean_overview(patient: int, night: int, fontsize_scale: float = 1.0):
+def _raw_vs_clean_overview(patient: int, night: int, fontsize_scale: float = 1.0, title: bool = True):
     '''
     Overview estilo night_overview que muestra una noche CRUDA y el efecto del procesamiento:
     IHR y acelerometría con la ventana válida sombreada (verde) y lo removido en gris, más tres
@@ -247,8 +248,8 @@ def _raw_vs_clean_overview(patient: int, night: int, fontsize_scale: float = 1.0
     tick_fs = 11 * fontsize_scale
     legend_fs = 11 * fontsize_scale
 
-    fig, ax = plt.subplots(5, 1, figsize=(14, 8), sharex=True,
-                           gridspec_kw={'height_ratios': [3, 3, 0.6, 0.6, 0.6]})
+    fig, ax = plt.subplots(5, 1, figsize=(14, 7), sharex=True,
+                           gridspec_kw={'height_ratios': [2.2, 2.2, 0.6, 0.6, 0.6]})
 
     t_min = min(float(hr['Timestamp'].min()), float(motion['Timestamp'].min()))
     # la vista se limita al alcance real de la noche (IHR / etiquetas): motion suele traer
@@ -259,14 +260,16 @@ def _raw_vs_clean_overview(patient: int, night: int, fontsize_scale: float = 1.0
     vs_h, ve_h, end_h = to_h(vs), to_h(ve), to_h(t_max)
 
     ax[0].plot(to_h(hr['Timestamp']), hr['hr'], color='tab:red')
-    ax[0].set_ylabel('IHR [bpm]', fontsize=label_fs)
+    ax[0].set_ylabel('IHR [bpm]', fontsize=label_fs, rotation=0, ha='right', va='center', labelpad=8)
+    ax[0].set_yticks([])
     hr_view = hr[to_h(hr['Timestamp']).between(0, to_h(t_max))]
     if len(hr_view):
         ax[0].set_ylim(float(hr_view['hr'].min()), float(hr_view['hr'].max()))
     ax[1].plot(to_h(motion['Timestamp']), motion['x'], label='x', color='tab:red')
     ax[1].plot(to_h(motion['Timestamp']), motion['y'], label='y', color='tab:green')
     ax[1].plot(to_h(motion['Timestamp']), motion['z'], label='z', color='tab:blue')
-    ax[1].set_ylabel('Accel [g]', fontsize=label_fs)
+    ax[1].set_ylabel('Accel [g]', fontsize=label_fs, rotation=0, ha='right', va='center', labelpad=8)
+    ax[1].set_yticks([])
     # límites Y según lo que cae dentro de la vista (evita que las muestras espurias los estiren)
     mo_view = motion[to_h(motion['Timestamp']).between(0, end_h)]
     if len(mo_view):
@@ -312,11 +315,11 @@ def _raw_vs_clean_overview(patient: int, night: int, fontsize_scale: float = 1.0
         a.tick_params(axis='both', labelsize=tick_fs)
 
     _band(ax[2], expert)
-    ax[2].set_ylabel('Expert\n(cruda)', fontsize=label_fs, rotation=0, ha='right', va='center', labelpad=8)
+    ax[2].set_ylabel('Expert\n(raw)', fontsize=label_fs, rotation=0, ha='right', va='center', labelpad=8)
     _band(ax[3], dreem)
-    ax[3].set_ylabel('Dreem\n(cruda)', fontsize=label_fs, rotation=0, ha='right', va='center', labelpad=8)
+    ax[3].set_ylabel('Dreem\n(raw)', fontsize=label_fs, rotation=0, ha='right', va='center', labelpad=8)
     _band(ax[4], expert, kept)
-    ax[4].set_ylabel('Expert\n(procesada)', fontsize=label_fs, rotation=0, ha='right', va='center', labelpad=8)
+    ax[4].set_ylabel('Expert\n(proccesed)', fontsize=label_fs, rotation=0, ha='right', va='center', labelpad=8)
 
     legend_patches = [mpatches.Patch(color=c, label=STAGE_NAMES[s]) for s, c in STAGE_COLORS.items()]
     legend_patches.append(mpatches.Patch(facecolor='red', alpha=0.35, label='gap señal (Δt>60s)'))
@@ -327,11 +330,12 @@ def _raw_vs_clean_overview(patient: int, night: int, fontsize_scale: float = 1.0
     fig.align_ylabels(ax)
     plt.tight_layout()
 
-    n_kept = int(kept.sum())
-    estado = 'DESCARTADA' if discarded else f'{n_kept}/{n_ep} épocas conservadas'
-    fig.suptitle(f'Cruda vs procesada — P{patient:02d} N{night}  ·  ventana '
-                 f'[{vs_h:.2f}, {ve_h:.2f}] h  ·  {estado}', fontsize=14)
-    fig.tight_layout()
+    if title:
+        n_kept = int(kept.sum())
+        estado = 'DESCARTADA' if discarded else f'{n_kept}/{n_ep} épocas conservadas'
+        fig.suptitle(f'Cruda vs procesada — P{patient:02d} N{night}  ·  ventana '
+                     f'[{vs_h:.2f}, {ve_h:.2f}] h  ·  {estado}', fontsize=14)
+        fig.tight_layout()
     return fig
 
 def raw_vs_clean_overview(patient: int, night: int, save: bool = False):
@@ -340,14 +344,17 @@ def raw_vs_clean_overview(patient: int, night: int, save: bool = False):
     filtro por época): night_overview con la ventana sombreada y el hipnograma Expert antes
     (cruda) y después (procesada). Ej.: raw_vs_clean_overview(20, 1).
     '''
-    fig = _raw_vs_clean_overview(patient, night, fontsize_scale=1.0)
     if save:
-        fig.savefig(FIG_DIR / f'raw-vs-clean-{patient}-{night}.png', dpi=200, bbox_inches='tight')
+        save_fig = _raw_vs_clean_overview(patient, night, fontsize_scale=1.3, title=False)
+        save_fig.savefig(FIG_DIR / f'raw-vs-clean-{patient}-{night}.png', dpi=200, bbox_inches='tight')
+        plt.close(save_fig)
+
+    _raw_vs_clean_overview(patient, night, fontsize_scale=1.3)
     plt.show()
 
 def _draw_class_distribution(distribution: dict, fontsize_scale: float = 1.0):
     label_fs = 12 * fontsize_scale
-    tick_fs = 11 * fontsize_scale
+    tick_fs = 0 * fontsize_scale
     legend_fs = 11 * fontsize_scale
 
     expert_pct = 100 * distribution['expert'] / distribution['expert'].sum()

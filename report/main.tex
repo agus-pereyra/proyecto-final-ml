@@ -10,11 +10,12 @@
 \usepackage{textcomp}
 \usepackage{xcolor}
 \usepackage{hyperref}
-\def\BibTeX{{\rm B\kern-.05em{\sc i\kern-.025em b}\kern-.08em
-    T\kern-.1667em\lower.7ex\hbox{E}\kern-.125emX}}
+\usepackage{enumitem}
+\usepackage{siunitx}
+
 \begin{document}
 
-\title{Predicción de Etapas del Sueño sobre señales Fisiológicas con RNNs\\
+\title{Predicción de Etapas del Sueño sobre señales Fisiológicas capturadas con SmartWatch\\
 % {\footnotesize \textsuperscript{*}Note: Sub-titles are not captured for https://ieeexplore.ieee.org  and
 % should not be used}
 }
@@ -43,53 +44,34 @@ sleep staging, recurrent neural networks, heart rate variability, accelerometry,
 
 \section{Introducción}
 
-Frente a la polisomnografía -- costosa y confinada al laboratorio --, los dispositivos \emph{smart-watch} son capaces 
-de registrar IHR (\emph{Instantaneous Heart Rate}) y acelerometría de forma continua y no invasiva, habilitando el 
-monitoreo domiciliario.
+Frente a la polisomnografía --costosa y confinada al laboratorio--, los dispositivos \emph{smart-watch} son capaces de registrar IHR (\emph{Instantaneous Heart Rate}) y acelerometría de forma continua y no invasiva, habilitando el monitoreo domiciliario.
 
-La \emph{estadificación del sueño} (\emph{sleep staging}) --asignar una etapa a cada época de
-$30$\,s de registro, según el estándar clínico AASM-- es central para el diagnóstico de trastornos
-como la apnea o el insomnio, pero hoy depende de la polisomnografía y de la anotación manual de un
-experto, lo que la vuelve cara e incómoda. Lograrla a partir de señales de muñeca abriría la puerta
-a un monitoreo accesible y prolongado en el tiempo.
+La \emph{estadificación del sueño} (\emph{sleep staging}) --asignar una etapa a cada época de $30$\,s de registro, según el estándar clínico AASM-- es central para el diagnóstico de trastornos como la apnea o el insomnio, pero hoy depende de la polisomnografía y de la anotación manual de un experto, lo que la vuelve cara e incómoda. Lograrla a partir de señales de muñeca abriría la puerta a un monitoreo accesible y prolongado en el tiempo.
 
-Abordamos la tarea como un problema de \textbf{clasificación multiclase supervisada}. La entrada de
-nuestro algoritmo es la IHR y la acelerometría triaxial de una época de $30$\,s (o su secuencia a lo
-largo de la noche), y utilizamos modelos de aprendizaje automático --desde un \emph{baseline}
-tabular (XGBoost, MLP) hasta redes sobre la señal cruda (CNN 1D) y modelos secuenciales
-(LSTM/BiLSTM y un híbrido CNN--LSTM)-- para predecir la etapa del sueño
-\{Wake, $N_1$, $N_2$, $N_3$, REM\}. Como referencia se emplean las etiquetas de un experto
-(\emph{ground-truth}) y las del dispositivo Dreem, basado en EEG. El eje del trabajo es comparar
-esta progresión de modelos para cuantificar el aporte del \textbf{contexto temporal inter-época}
---la dependencia entre etapas contiguas-- frente a la clasificación de cada época de forma aislada.
-
-La Fig.~\ref{fig:nights} muestra un ejemplo de la entrada: las señales de IHR y acelerometría de una
-noche completa junto al hipnograma de referencia. Ya se aprecia la estructura cíclica del sueño --la
-IHR desciende y se estabiliza en sueño profundo ($N_3$) y se vuelve más variable en REM, mientras
-que la acelerometría sólo registra actividad en las transiciones a vigilia--, correspondencia que
-hace la tarea abordable a partir de datos de muñeca.
-
-\begin{figure}[H]
-\centering
-\includegraphics[width=\linewidth]{figures/night-overview-0-1.png}
-\caption{Ejemplo de la entrada del algoritmo: señales (IHR y acelerometría) e hipnograma de una
-noche completa (Paciente 00, Noche 1).}
-\label{fig:nights}
-\end{figure} 
+Abordamos la tarea como un problema de \textbf{clasificación multiclase supervisada}. La entrada de nuestro algoritmo es la IHR y la acelerometría triaxial de una época de $30$\,s (o su secuencia a lo largo de la noche), y utilizamos modelos de aprendizaje automático desde un \emph{baseline} tabular (XGBoost, MLP) hasta modelos secuenciales que utilizan la señal cruda (BiLSTM y un híbrido CNN--BiLSTM) para predecir la etapa del sueño. Como referencia se emplean las etiquetas de un experto (\emph{ground-truth}) y una referencia secundaria (y como nuestra competencia) las etiquetas de un dispositivo Dreem Headband, basado en EEG (electroencefalograma). El eje del trabajo es comparar esta progresión de modelos para cuantificar el aporte del \textbf{contexto temporal inter-época} --la dependencia entre etapas contiguas-- frente a la clasificación de cada época de forma aislada.
 
 \section{Conjunto de Datos y Características}
 
-PhysioNet BIDSleep~\cite{bidsleep} recopila señales fisiológicas tales como la frecuencia cardíaca instantánea
-(IHR) y tres ejes de acelerometría medidas con un Apple Watch a lo largo de 253 noches de 47 adultos sanos. Cada 
-lapso de 30 segundos se encuentra etiquetado, por dos fuentes diferentes, como una etapa del sueño:
-\{0:Wake, 1:$N_1$, 2:$N_2$, 3:$N_3$, 4:REM, 5:Unknown\}
 
-El experto define la variable objetivo (Dreem queda como referencia independiente) y se descarta
-la clase \emph{Unknown}. La partición es \textbf{por paciente} —evita \textit{leakage} y mide la
-generalización a sujetos nuevos—: del corpus válido ($\approx$208k épocas), $123\,495$/$37\,566$/$47\,427$
-en \emph{train}/\emph{val}/\emph{test} (29/8/10 pacientes) para los modelos tabulares y $33$/$7$/$7$
-sujetos para los secuenciales.
+PhysioNet BIDSleep~\cite{bidsleep} recopila señales fisiológicas tales como la frecuencia cardíaca instantánea (IHR) y tres ejes de acelerometría medidas con un Apple Watch a lo largo de 253 noches de 47 adultos sanos. Cada lapso de 30 segundos se encuentra etiquetado por dos fuentes diferentes (\emph{expert} y \emph{dreem}) con una etapa del sueño: 
+\begin{enumerate}[start=0]
+    \item \textbf{Wake} (Despierto)
+    \item \textbf{N1} (Sueño Ligero): etapa más superficial y la entrada al sueño. Suele ser la clase más dificil de detectar dado que es breve e inestable.
+    \item \textbf{N2} (Sueño Ligero consolidado): sujeto dormido de forma estable. Es la etapa más frecuente.
+    \item \textbf{N3} (Sueño profundo): el sueño mas reparador. En él cuesta mucho despertar al paciente. Debería mostrar IHR mínimo y cuerpo inmóbil 
+    \item \textbf{REM} (\emph{Rapid Eye Movement}): también llamado ``sueño paradójico''. El EEG se parece al de vigilia pero el paciente está profundamente dormido, involucrando IHR irregular.
+\end{enumerate}
 
+Podemos observar un ejemplo de todos los datos contenidos en una noche en la Figura~\ref{fig:night}.
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=\linewidth]{figures/night-overview-0-1.png}
+    \caption{Ejemplo de la entrada del algoritmo: señales (IHR y acelerometría) e hipnograma de una noche completa (Paciente 00, Noche 1).}
+    \label{fig:night}
+\end{figure} 
+
+A la hora de particionar el conjunto para el entrenamiento se realiza \textbf{por paciente} evitando así \textit{leakage} y midiendo la generalización a sujetos nuevos. 
 Se emplean dos representaciones: una \textbf{tabular} de $122$ \textit{features} por época y la
 \textbf{señal cruda} $150\times4$ en secuencias por noche, ambas estandarizadas con estadísticos de
 \emph{train}; los modelos densos imputan a la mediana los \texttt{NaN} de borde. El IHR se muestrea a
@@ -180,10 +162,10 @@ concentran la mayor parte de las épocas, seguidas de $N_3$ ($18.5\%$) y Wake ($
 que $N_1$ es marginal ($7.1\%$). Este desbalance justifica evaluar con $F1_{Macro}$, que pondera
 cada clase por igual, y compensar la frecuencia de clase durante el entrenamiento.
 
-\begin{figure}[H]
+\begin{figure}[h]
 \centering
-\includegraphics[width=1.1\linewidth]{figures/crudavsprocesada1.png}
-\caption{}
+\includegraphics[width=\linewidth]{figures/raw-vs-clean-20-1.png}
+\caption{Ejemplo de procesamiento de una noche (Paciente 20, noche 1). La ventana válida (fondo verde) queda delimitada por el final de la continuidad de la acelerometría (IHR continúa) hasta las 7.94hs conservando 949/1282 épocas.}
 \label{fig:problematic}
 \end{figure}
 
@@ -195,13 +177,6 @@ la ventana válida (verde) conserva el tramo aprovechable mientras se recorta la
 acelerometría se interrumpe y aparecen \textit{gaps} de señal (rojo), y el hipnograma procesado descarta
 esas épocas del final.
 \vspace{-1.2em}
-\begin{figure}[H]
-\centering
-\includegraphics[width=\linewidth]{figures/label-confusion-matrix.png}
-\caption{Matriz de confusión experto vs.\ Dreem; el desacuerdo se concentra en etapas adyacentes.}
-\label{fig:cm-expert-dreem}
-\end{figure}
-\vspace{-1em}
 
 El acuerdo entre las dos fuentes de etiquetado (Ec.~\ref{eq:cohen-kappa}) fija el techo de la
 tarea: $\kappa = 0.74$ global, máximo en $N_3$ ($0.90$) y REM ($0.85$) y mínimo en $N_1$ ($0.13$),
@@ -232,17 +207,15 @@ aunque lejos del techo humano ($\kappa = 0.74$); los errores se concentran entre
 \caption{Rendimiento en test (5 clases) frente al etiquetado del experto.}
 \label{tab:resultados}
 \centering
-\begin{tabular}{lcc}
+\begin{tabular}{lccc}
 \hline
-\textbf{Modelo} & \textbf{$F1_{Macro}$} & \textbf{Cohen's $\kappa$} \\
+\textbf{Modelo} & \textbf{$F1_{acro}$} & \textbf{Cohen's $\kappa$} & \textbf{Accuracy} \\
 \hline
-Dreem Label & --- & 0.74 \\
-XGBoost(features) & 0.4707 & 0.3776 \\
-XGBoost(embeddings) & 0.3971 & 0.2867 \\
-XGBoost(features+embeddings) & 0.4686 & 0.3762 \\
-MLP(features) & & \\
-LSTM(Identity) & 0.559 & 0.443\\
-LSTM(CNN1d) & & \\
+Dreem Label & --- & 0.74 &  -- \\
+XGBoost & 0.4707 & 0.3776 & \\
+MLP & & \\
+BiLSTM & 0.559 & 0.443\\
+Híbrido & & \\
 \hline
 \end{tabular}
 \end{table}
