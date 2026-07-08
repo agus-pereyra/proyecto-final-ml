@@ -38,14 +38,5 @@ venv/
 /data/*
 !/data/leer.txt
 
-# Claude Code
-.claude/
-CLAUDE.md
-
 output.png
-
-/data_extraction/epoch_features.csv
-/data_extraction/ae_embeddings.parquet
-
-/data_extraction/processed_data
-/data_extraction/sequences
+/data_extraction/

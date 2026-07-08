@@ -50,6 +50,8 @@ class ConfigLSTM:
     epochs: int = 60
     grad_clip: float = 5.0
     use_class_weights: bool = True
+    amp: bool = None  # mixed precision; None -> se activa solo si device=='cuda'
+    patience: int = None  # early stopping: corta si el kappa de val no mejora en N epochs; None -> sin ES
 
     # split por sujeto (sujetos disjuntos), fracciones sobre el total de sujetos
     val_frac: float = 0.15
@@ -302,7 +304,7 @@ def collect_predictions(model, loader, device):
 
 
 @torch.no_grad()
-def evaluate_loader(model, loader, criterion, device):
+def evaluate_loader(model, loader, criterion, device, use_amp=False):
     '''
     Una sola pasada por el loader que devuelve (loss_promedio, y_true, y_pred). Usada
     en cada epoch para las curvas de validación (loss + métricas) sin iterar dos veces.
@@ -312,8 +314,9 @@ def evaluate_loader(model, loader, criterion, device):
     total, n = 0.0, 0
     for feats, labels, lengths in loader:
         feats, labels = feats.to(device), labels.to(device)
-        logits = model(feats, lengths)               # [B, T, C]
-        loss = criterion(logits.reshape(-1, N_CLASSES), labels.reshape(-1))
+        with torch.autocast(device_type='cuda', enabled=use_amp):
+            logits = model(feats, lengths)               # [B, T, C]
+            loss = criterion(logits.reshape(-1, N_CLASSES), labels.reshape(-1))
         total += loss.item() * feats.shape[0]
         n += feats.shape[0]
         pred = logits.argmax(-1)
@@ -394,34 +397,53 @@ def _build(cfg: ConfigLSTM, encoder: EpochEncoder = None):
 def plot_history(history, title='', ax=None):
     '''
     Curvas de entrenamiento de UN modelo: (izq) loss train vs val por epoch,
-    (der) métricas de validación (kappa/macro-F1/accuracy). Devuelve los ejes.
+    (der) métricas de validación (kappa/macro-F1/accuracy). Una línea punteada roja marca la
+    época del **mejor kappa de val** (el checkpoint elegido; con early stopping el corte ocurre
+    `patience` épocas después). Devuelve los ejes.
     '''
     import matplotlib.pyplot as plt
     ep = [h['epoch'] for h in history]
+    best_epoch = max(history, key=lambda h: h['kappa'])['epoch']  # época del checkpoint guardado
     if ax is None:
         _, ax = plt.subplots(1, 2, figsize=(11, 4))
     ax[0].plot(ep, [h['train_loss'] for h in history], label='train')
     ax[0].plot(ep, [h['val_loss'] for h in history], label='val')
+    ax[0].axvline(best_epoch, color='red', ls='--', lw=1, label=f'mejor epoch ({best_epoch})')
     ax[0].set_xlabel('época'); ax[0].set_ylabel('loss'); ax[0].set_title(f'{title} — loss'); ax[0].legend()
     ax[1].plot(ep, [h['kappa'] for h in history], label='kappa')
     ax[1].plot(ep, [h['macro_f1'] for h in history], label='macro-F1')
     ax[1].plot(ep, [h['accuracy'] for h in history], label='accuracy')
+    ax[1].axvline(best_epoch, color='red', ls='--', lw=1)
     ax[1].set_xlabel('época'); ax[1].set_title(f'{title} — validación'); ax[1].legend()
     return ax
 
 
-def train(cfg: ConfigLSTM, encoder: EpochEncoder = None):
+def train(cfg: ConfigLSTM, encoder: EpochEncoder = None, epoch_callback=None, verbose=True):
     '''
     ÚNICA función de entrenamiento. Corre en modo standalone (cfg.hybrid=False) o híbrido
     (cfg.hybrid=True); en ambos casos el mismo loop, con barra de progreso tqdm (sin prints
     sueltos por epoch). Guarda el mejor checkpoint por Kappa de validación (con config,
     mean/std, subj) y al final lo recarga y reporta test.
 
+    `epoch_callback(epoch, val_metrics)`: hook opcional llamado al final de cada epoch (lo usa
+    el search para reportar el kappa de val al pruner de Optuna y cortar trials malos temprano;
+    si lanza una excepción, el loop la propaga).
+
+    `verbose` (default True): muestra la barra tqdm y el reporte de test. El search lo pone en
+    False para no ensuciar el output (una barra + un bloque de test por trial es ilegible).
+
+    Con `cfg.amp` (o device=='cuda') usa mixed precision (autocast + GradScaler): ~1.5-2x en la
+    CNN del híbrido y menos memoria.
+
+    Con `cfg.patience` (int) hace **early stopping**: corta si el kappa de val no mejora en esas
+    epochs seguidas (el mejor checkpoint ya quedó guardado). `None` = entrena `cfg.epochs` fijas.
+
     Devuelve (model, history, test_metrics). `history` incluye por epoch: train_loss,
     val_loss y las métricas de validación (kappa, macro_f1, accuracy) -> curvas train/val.
     '''
     set_seed(cfg.seed)
     device = cfg.device
+    use_amp = cfg.amp if cfg.amp is not None else (device == 'cuda')
 
     loaders, (mean, std), subj, train_labels, encoder = _build(cfg, encoder)
 
@@ -429,30 +451,36 @@ def train(cfg: ConfigLSTM, encoder: EpochEncoder = None):
     weight = class_weights(train_labels, device) if cfg.use_class_weights else None
     criterion = nn.CrossEntropyLoss(weight=weight, ignore_index=UNKNOWN)
     optim = torch.optim.Adam(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
+    scaler = torch.amp.GradScaler('cuda', enabled=use_amp)
 
     ckpt_dir = Path(cfg.ckpt_path).parent
     ckpt_dir.mkdir(parents=True, exist_ok=True)
 
     history = []
     best_kappa = -np.inf
-    modo = 'híbrido CNN1D->BiLSTM' if cfg.hybrid else 'LSTM tabular'
-    pbar = tqdm(range(1, cfg.epochs + 1), desc=f'entrenando ({modo})', unit='epoch')
+    best_epoch = 0                       # última epoch que mejoró el kappa de val
+    modo = 'Hybrid' if cfg.hybrid else 'LSTM'
+    pbar = tqdm(range(1, cfg.epochs + 1), desc=f'Training ({modo})', unit='epoch',
+                disable=not verbose)
     for epoch in pbar:
         model.train()
         total, n = 0.0, 0
         for feats, labels, lengths in loaders['train']:
             feats, labels = feats.to(device), labels.to(device)
             optim.zero_grad()
-            logits = model(feats, lengths)                       # [B, T, C]
-            loss = criterion(logits.reshape(-1, N_CLASSES), labels.reshape(-1))
-            loss.backward()
+            with torch.autocast(device_type='cuda', enabled=use_amp):
+                logits = model(feats, lengths)                       # [B, T, C]
+                loss = criterion(logits.reshape(-1, N_CLASSES), labels.reshape(-1))
+            scaler.scale(loss).backward()
+            scaler.unscale_(optim)                                    # unscale antes del clip
             nn.utils.clip_grad_norm_(model.parameters(), cfg.grad_clip)
-            optim.step()
+            scaler.step(optim)
+            scaler.update()
             total += loss.item() * feats.shape[0]
             n += feats.shape[0]
 
         train_loss = total / max(n, 1)
-        val_loss, y_val, p_val = evaluate_loader(model, loaders['val'], criterion, device)
+        val_loss, y_val, p_val = evaluate_loader(model, loaders['val'], criterion, device, use_amp)
         val_m = compute_metrics(y_val, p_val)
         history.append({'epoch': epoch, 'train_loss': train_loss, 'val_loss': val_loss,
                         'kappa': val_m['kappa'], 'macro_f1': val_m['macro_f1'],
@@ -461,6 +489,7 @@ def train(cfg: ConfigLSTM, encoder: EpochEncoder = None):
         is_best = val_m['kappa'] > best_kappa
         if is_best:
             best_kappa = val_m['kappa']
+            best_epoch = epoch
             torch.save({
                 'model_state': model.state_dict(),
                 'config': cfg,
@@ -475,13 +504,24 @@ def train(cfg: ConfigLSTM, encoder: EpochEncoder = None):
             'best': f'{best_kappa:.4f}{"*" if is_best else ""}',
         })
 
+        if epoch_callback is not None:
+            epoch_callback(epoch, val_m)
+
+        # early stopping: sin mejora del kappa de val
+        if cfg.patience is not None and epoch - best_epoch >= cfg.patience:
+            pbar.set_description(
+                f'Early Stop ({modo}) - epoch {epoch} (mejor {best_kappa:.4f} @ {best_epoch})')
+            pbar.close()
+            break
+
     ckpt = torch.load(cfg.ckpt_path, map_location=device, weights_only=False)
     model.load_state_dict(ckpt['model_state'])
     y_test, p_test = collect_predictions(model, loaders['test'], device)
     test_m = compute_metrics(y_test, p_test)
-    print(f'\nTEST ({modo}) — mejor ckpt (val kappa {ckpt["val_kappa"]:.4f}, epoch {ckpt["epoch"]}):')
-    print(f'  kappa {test_m["kappa"]:.4f} | macroF1 {test_m["macro_f1"]:.4f} | acc {test_m["accuracy"]:.4f}')
-    print(f'  4-clases: kappa {test_m["kappa_4"]:.4f} | macroF1 {test_m["macro_f1_4"]:.4f} | acc {test_m["accuracy_4"]:.4f}')
+    if verbose:
+        print(f'\nTEST ({modo}) — mejor ckpt (val kappa {ckpt["val_kappa"]:.4f}, epoch {ckpt["epoch"]}):')
+        print(f'  kappa {test_m["kappa"]:.4f} | macroF1 {test_m["macro_f1"]:.4f} | acc {test_m["accuracy"]:.4f}')
+        print(f'  4-clases: kappa {test_m["kappa_4"]:.4f} | macroF1 {test_m["macro_f1_4"]:.4f} | acc {test_m["accuracy_4"]:.4f}')
     return model, history, test_m
 
 
@@ -552,4 +592,4 @@ def predict_night(model, cfg: ConfigLSTM, subject: int, night: int, device=None)
 
 if __name__ == '__main__':
     train(ConfigLSTM())                       # LSTM tabular
-    train(ConfigLSTM(hybrid=True, ckpt_path='../models/best_cnn_lstm.pt'))  # híbrido
+    train(ConfigLSTM(hybrid=True, ckpt_path='../models/best_hybrid.pt'))  # híbrido
