@@ -27,11 +27,18 @@ except ImportError:
     from src.data import EDA
 
 def _epoch_tensor(hr_win, acc_win, epoch_start, epoch_end, n_steps=150):
-    '''
-    Tensor de una época (idéntico al de process_dataset_cnn): HR interpolada +
-    media/desvío/ENMO por bin de la magnitud invariante. n_steps=150 => 5 Hz.
-    In:  hr_win, acc_win (muestras de la época), epoch_start/end [s], n_steps.
-    Out: np.ndarray float32 (n_steps, 4) [HR, mag_mean, mag_std, enmo_mean].
+    '''Tensor de una época (idéntico al de get_cnn_dataset): HR interpolada + media/desvío/
+    ENMO por bin de la magnitud invariante. n_steps=150 => 5 Hz.
+
+    Args:
+        hr_win: muestras de IHR de la época (columnas Timestamp, hr).
+        acc_win: muestras de acelerometría de la época (columnas Timestamp, x, y, z).
+        epoch_start: inicio de la época [s].
+        epoch_end: fin de la época [s].
+        n_steps: cantidad de timesteps de la grilla fija.
+
+    Returns:
+        np.ndarray float32 (n_steps, 4) con canales [HR, mag_mean, mag_std, enmo_mean].
     '''
     bin_dur = 30 / n_steps
     grid = np.linspace(epoch_start, epoch_end, n_steps, dtype=np.float32)
@@ -51,18 +58,18 @@ def _epoch_tensor(hr_win, acc_win, epoch_start, epoch_end, n_steps=150):
     return np.column_stack([hr_fixed, mag_mean, mag_std, enmo_mean])
 
 def build_night_sequences(output_dir='../data_extraction/sequences', n_patients=None, n_steps=150):
-    '''
-    Como get_cnn_dataset pero conservando el borde de noche: por paciente guarda
-    X (N,150,4), y (N,) y night_id (N,) en <paciente>.npz. La LSTM no puede cruzar
-    de una noche a otra, así que ese night_id es imprescindible.
+    '''Como get_cnn_dataset pero conservando el borde de noche: por paciente guarda X (N,150,4),
+    y (N,) y night_id (N,) en <paciente>.npz. La LSTM no puede cruzar de una noche a otra, así
+    que ese night_id es imprescindible. Se descartan las épocas con muy pocas muestras (igual
+    que el pipeline original), lo que puede romper la contigüidad dentro de una noche.
 
-    Nota: se descartan las épocas con muy pocas muestras (igual que el pipeline
-    original), lo que puede romper la contigüidad dentro de una noche; para esta
-    primera versión se acepta (son pocas y aisladas).
+    Args:
+        output_dir: directorio destino de los .npz.
+        n_patients: si se pasa, procesa sólo los primeros n pacientes.
+        n_steps: cantidad de timesteps por época (150 => 5 Hz).
 
-    In:  output_dir (destino), n_patients (opcional), n_steps.
-    Out: nada; escribe un `.npz` por paciente con `X (N,150,4)`, `y (N,)`,
-         `night_id (N,)` y `epoch (N,)`.
+    Returns:
+        None. Escribe un `.npz` por paciente con X (N,150,4), y (N,), night_id (N,) y epoch (N,).
     '''
     windows = EDA.valid_windows()
     gap_res = EDA.internal_gap_resolution()
@@ -123,12 +130,16 @@ def build_night_sequences(output_dir='../data_extraction/sequences', n_patients=
     print(f"--- Listo en: {output_dir} ---")
 
 def channel_stats(files):
-    '''
-    Media/desvío por canal (los 4: HR, mag_mean, mag_std, enmo_mean) sobre TODAS
-    las épocas de los archivos dados (típicamente los de train). Se usa para
-    estandarizar la señal cruda antes de la CNN: el canal HR (~40-100) domina por
-    dos órdenes de magnitud sobre enmo (~0), así que sin esto la red arranca sesgada.
-    std=0 -> 1. Devuelve mean, std como arrays float32 de forma (4,).
+    '''Media/desvío por canal (los 4: HR, mag_mean, mag_std, enmo_mean) sobre TODAS las épocas
+    de los archivos dados. Se usa para estandarizar la señal cruda antes de la CNN: el canal HR
+    (~40-100) domina por dos órdenes de magnitud sobre enmo (~0), así que sin esto la red
+    arranca sesgada. Los canales con std=0 se llevan a 1.
+
+    Args:
+        files: rutas a los .npz sobre los que calcular las stats (típicamente los de train).
+
+    Returns:
+        Tupla (mean, std), arrays float32 de forma (4,).
     '''
     acc = [np.load(f)['X'] for f in files]          # cada uno [N, 150, 4]
     arr = np.concatenate(acc, axis=0).reshape(-1, acc[0].shape[-1])
@@ -138,14 +149,23 @@ def channel_stats(files):
     return mean.astype(np.float32), std.astype(np.float32)
 
 class NightSignalDataset(Dataset):
-    '''
-    Una noche por item: (feats [T,150,4] float32, labels [T] int64). Lee los .npz
-    de build_night_sequences y agrupa por night_id (las filas ya vienen en orden
-    de época). Compatible con `lstm.collate_nights`, que padea feats con 0.0 y
-    labels con UNKNOWN.
+    '''Dataset de PyTorch que entrega una noche por item: (feats [T,150,4] float32, labels [T]
+    int64). Lee los .npz de `build_night_sequences` y agrupa por night_id (las filas ya vienen
+    en orden de época). Compatible con `lstm.collate_nights`, que padea feats con 0.0 y labels
+    con UNKNOWN.
 
-    Si se pasan `mean`/`std` (forma (4,), calculadas con `channel_stats` sobre el
-    train), la señal se estandariza por canal en `__getitem__`.
+    Args (__init__):
+        files: rutas a los .npz por paciente.
+        mean: media por canal (4,) para estandarizar; si es None, no estandariza.
+        std: desvío por canal (4,) para estandarizar; si es None, no estandariza.
+
+    Atributos:
+        mean, std: stats por canal (o None).
+        nights: lista de (X [T,150,4], y [T]), una entrada por noche.
+
+    Métodos:
+        __len__: cantidad de noches.
+        __getitem__: devuelve (feats, labels) de una noche, estandarizando si hay mean/std.
     '''
     def __init__(self, files, mean=None, std=None):
         self.mean = mean
@@ -170,10 +190,17 @@ class NightSignalDataset(Dataset):
 
 def split_night_files(processed_dir='../data_extraction/sequences',
                       val_frac=0.15, test_frac=0.15, seed=36631):
-    '''
-    Divide los .npz por paciente (un archivo = un sujeto) en train/val/test, con
-    el mismo criterio que `split_subjects` de lstm.py (fracciones + shuffle con
-    seed). Devuelve tres listas de paths.
+    '''Divide los .npz por paciente (un archivo = un sujeto) en train/val/test, con el mismo
+    criterio que `split_subjects` de lstm.py (fracciones + shuffle con seed).
+
+    Args:
+        processed_dir: directorio con los .npz por paciente.
+        val_frac: fracción de sujetos para validación.
+        test_frac: fracción de sujetos para test.
+        seed: semilla del shuffle.
+
+    Returns:
+        Tupla (train_files, val_files, test_files), tres listas de paths.
     '''
     files = sorted(Path(processed_dir).glob('*.npz'))
     rng = np.random.default_rng(seed)

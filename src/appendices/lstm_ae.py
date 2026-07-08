@@ -39,10 +39,21 @@ from src.lstm import (
 
 @dataclass
 class ConfigAE:
-    '''
-    Config del autoencoder LSTM: paths, arquitectura (`hidden_size`, `latent_dim` =
-    tamaño del embedding por época, `num_layers`, `dropout`), optimización y split
-    por sujeto. `feature_cols`/`input_size` se completan al armar los loaders.
+    '''Configuración (dataclass) del autoencoder LSTM.
+
+    Atributos:
+        features_path: ruta al epoch_features.csv de entrada.
+        hidden_size: tamaño del estado oculto de las LSTM.
+        latent_dim: tamaño del bottleneck = embedding por época.
+        num_layers: nº de capas de las LSTM.
+        dropout: dropout entre capas de las LSTM.
+        batch_size, lr, weight_decay, epochs, grad_clip: hiperparámetros de optimización.
+        val_frac, test_frac: fracciones del split por sujeto (sujetos disjuntos).
+        seed: semilla de reproducibilidad.
+        device: dispositivo de cómputo ('cuda'/'cpu').
+        ckpt_path: ruta del checkpoint del mejor modelo.
+        embeddings_path: ruta del parquet de embeddings.
+        feature_cols, input_size: se completan en runtime al armar los loaders.
     '''
     features_path: str = '../../data_extraction/epoch_features.csv'
 
@@ -74,18 +85,26 @@ class ConfigAE:
 
 
 class SeqAutoencoder(nn.Module):
-    '''
-    Autoencoder secuencial determinístico (representación NO supervisada) sobre
-    secuencias de features por noche.
+    '''Autoencoder secuencial determinístico (representación NO supervisada) sobre secuencias
+    de features por noche. El encoder es un BiLSTM que concatena forward/backward y proyecta a
+    `latent` (z_t, embedding por época); el decoder es una LSTM unidireccional sobre z_t que
+    reconstruye las features. No usa etiquetas: el bottleneck `latent_dim` fuerza a comprimir
+    cada época (y su contexto temporal) en un vector de dimensión baja.
 
-      Encoder: BiLSTM sobre la secuencia packed -> concatena forward/backward por
-               timestep -> Linear(2*hidden -> latent) = z_t (embedding por época).
-      Decoder: LSTM (unidireccional) sobre la secuencia de z_t -> Linear(hidden -> F)
-               = x_hat_t (reconstrucción de las features de la época).
+    Args (__init__):
+        cfg: ConfigAE con la arquitectura (input_size, hidden_size, latent_dim, num_layers,
+            dropout).
 
-    El AE no usa las etiquetas en absoluto. El bottleneck `latent_dim` fuerza a
-    comprimir cada época (y su contexto temporal, vía la recurrencia) en un vector
-    de dimensión baja del cual se pueda reconstruir la entrada.
+    Atributos:
+        encoder_lstm: BiLSTM del encoder.
+        to_latent: Linear(2*hidden -> latent) que produce z_t.
+        decoder_lstm: LSTM unidireccional del decoder.
+        to_recon: Linear(hidden -> F) que produce la reconstrucción.
+
+    Métodos:
+        encode: features [B, T, F] -> embedding z [B, T, L].
+        decode: z [B, T, L] -> reconstrucción x_hat [B, T, F].
+        forward: devuelve (x_hat, z).
     '''
     def __init__(self, cfg: ConfigAE):
         super().__init__()
@@ -110,7 +129,17 @@ class SeqAutoencoder(nn.Module):
         self.to_recon = nn.Linear(cfg.hidden_size, cfg.input_size)
 
     def _run_lstm(self, lstm, x, lengths, total_length):
-        '''pack -> LSTM -> unpad, para que el padding no contamine los estados.'''
+        '''pack -> LSTM -> unpad, para que el padding no contamine los estados.
+
+        Args:
+            lstm: capa LSTM a aplicar (encoder o decoder).
+            x: entrada [B, T, *].
+            lengths: longitud real [B] de cada secuencia.
+            total_length: T al que re-paddear la salida.
+
+        Returns:
+            Salida de la LSTM [B, T, H] con el padding restaurado.
+        '''
         packed = pack_padded_sequence(x, lengths.cpu(), batch_first=True,
                                       enforce_sorted=False)
         packed_out, _ = lstm(packed)
@@ -119,28 +148,59 @@ class SeqAutoencoder(nn.Module):
         return out
 
     def encode(self, feats, lengths):
-        '''feats [B, T, F] -> z [B, T, L] (embedding por época).'''
+        '''Codifica las features por época en el embedding latente.
+
+        Args:
+            feats: features por época [B, T, F].
+            lengths: longitud real [B] de cada noche.
+
+        Returns:
+            Embedding z [B, T, L] (uno por época).
+        '''
         T = feats.shape[1]
         h = self._run_lstm(self.encoder_lstm, feats, lengths, T)  # [B, T, 2*hidden]
         return self.to_latent(h)                                  # [B, T, L]
 
     def decode(self, z, lengths):
-        '''z [B, T, L] -> x_hat [B, T, F].'''
+        '''Reconstruye las features por época a partir del embedding.
+
+        Args:
+            z: embedding por época [B, T, L].
+            lengths: longitud real [B] de cada noche.
+
+        Returns:
+            Reconstrucción x_hat [B, T, F].
+        '''
         T = z.shape[1]
         g = self._run_lstm(self.decoder_lstm, z, lengths, T)      # [B, T, hidden]
         return self.to_recon(g)                                   # [B, T, F]
 
     def forward(self, feats, lengths):
-        '''In: feats [B, T, F], lengths [B]. Out: (x_hat [B, T, F], z [B, T, L]).'''
+        '''Codifica y reconstruye una secuencia de features por noche.
+
+        Args:
+            feats: features por época [B, T, F].
+            lengths: longitud real [B] de cada noche.
+
+        Returns:
+            Tupla (x_hat [B, T, F], z [B, T, L]).
+        '''
         z = self.encode(feats, lengths)
         x_hat = self.decode(z, lengths)
         return x_hat, z
 
 
 def masked_mse(x_hat, x, lengths):
-    '''
-    MSE de reconstrucción promediando sobre features y sobre los timesteps válidos.
-    Los timesteps de padding (>= length) no contribuyen a la loss.
+    '''MSE de reconstrucción promediando sobre features y sobre los timesteps válidos. Los
+    timesteps de padding (>= length) no contribuyen a la loss.
+
+    Args:
+        x_hat: reconstrucción [B, T, F].
+        x: entrada estandarizada [B, T, F].
+        lengths: longitud real [B] de cada noche.
+
+    Returns:
+        Escalar (tensor) con el MSE enmascarado.
     '''
     T = x.shape[1]
     mask = torch.arange(T, device=x.device)[None, :] < lengths.to(x.device)[:, None]  # [B, T]
@@ -149,11 +209,15 @@ def masked_mse(x_hat, x, lengths):
 
 
 def make_loaders(cfg: ConfigAE):
-    '''
-    Carga las features, splitea por sujeto, estandariza con stats del train y arma
-    los DataLoaders. A diferencia de la LSTM supervisada, el AE NO descarta las
-    épocas Unknown (label=5): entran al entrenamiento no supervisado.
-    Devuelve (loaders, (mean, std), subj, splits).
+    '''Carga las features, splitea por sujeto, estandariza con stats del train y arma los
+    DataLoaders. A diferencia de la LSTM supervisada, el AE NO descarta las épocas Unknown
+    (label=5): entran al entrenamiento no supervisado.
+
+    Args:
+        cfg: configuración del autoencoder (se completan cfg.feature_cols y cfg.input_size).
+
+    Returns:
+        Tupla (loaders, (mean, std), subj, splits), donde loaders es un dict train/val/test.
     '''
     df = pd.read_csv(cfg.features_path)
     feature_cols = [c for c in df.columns if c not in META_COLS]
@@ -175,7 +239,16 @@ def make_loaders(cfg: ConfigAE):
 
 @torch.no_grad()
 def eval_recon(model, loader, device):
-    '''Reconstruction loss promedio (ponderada por noches) sobre un loader.'''
+    '''Reconstruction loss promedio (ponderada por noches) sobre un loader.
+
+    Args:
+        model: autoencoder entrenado.
+        loader: DataLoader a evaluar.
+        device: dispositivo de cómputo.
+
+    Returns:
+        Reconstruction loss promedio (float).
+    '''
     model.eval()
     total, n = 0.0, 0
     for feats, _labels, lengths in loader:
@@ -187,10 +260,16 @@ def eval_recon(model, loader, device):
 
 
 def train(cfg: ConfigAE):
-    '''
-    Entrena el autoencoder LSTM y guarda el mejor checkpoint por VAL reconstruction
-    loss (mínima). Devuelve (model, history). La extracción de embeddings es un paso
-    aparte (extract_embeddings), llamado desde el notebook.
+    '''Entrena el autoencoder LSTM y guarda el mejor checkpoint por VAL reconstruction loss
+    (mínima). La extracción de embeddings es un paso aparte (extract_embeddings), llamado
+    desde el notebook.
+
+    Args:
+        cfg: configuración del autoencoder.
+
+    Returns:
+        Tupla (model con el mejor checkpoint cargado, history) con train_recon/val_recon por
+        epoch.
     '''
     set_seed(cfg.seed)
     device = cfg.device
@@ -250,15 +329,21 @@ def train(cfg: ConfigAE):
 
 @torch.no_grad()
 def extract_embeddings(model, cfg, mean, std):
-    '''
-    Extrae el embedding del bottleneck z_t por época para TODOS los sujetos (sin
-    leakage: el AE se entrenó solo con sujetos de train). Alinea cada z_t con
-    (subject, night, epoch, label, dreem) y devuelve un DataFrame; lo guarda en
-    cfg.embeddings_path (parquet).
+    '''Extrae el embedding del bottleneck z_t por época para TODOS los sujetos (sin leakage: el
+    AE se entrenó solo con sujetos de train). Alinea cada z_t con (subject, night, epoch, label,
+    dreem) y lo guarda en cfg.embeddings_path (parquet). Reutiliza NightSequenceDataset para la
+    estandarización + imputación de NaN de borde, así el preprocesamiento es idéntico al del
+    entrenamiento; procesa una noche por vez (batch de 1 -> sin padding).
 
-    Reutiliza NightSequenceDataset para la estandarización + imputación de NaN de
-    borde, así el preprocesamiento es idéntico al del entrenamiento. Procesa una
-    noche por vez (batch de 1 -> sin padding).
+    Args:
+        model: autoencoder entrenado.
+        cfg: configuración del autoencoder.
+        mean: media por feature (stats del train) para estandarizar.
+        std: desvío por feature (stats del train) para estandarizar.
+
+    Returns:
+        DataFrame con (subject, night, epoch, emb_0..emb_{L-1}, label, dreem). Escribe además
+        el parquet.
     '''
     device = cfg.device
     model.eval()

@@ -27,10 +27,19 @@ STAGE_COLORS = {
 STAGE_NAMES = {0: 'Wake', 1: 'N1', 2: 'N2', 3: 'N3', 4: 'REM', 5: 'Unknown'}
 
 def _draw_night_overview(night_data: pd.DataFrame, fontsize_scale: float = 1.0):
+    '''Dibuja una noche completa: IHR, su frecuencia de muestreo, acelerometría (x/y/z) y los
+    hipnogramas de Expert y Dreem, sin guardar ni mostrar.
+
+    Args:
+        night_data: tupla (hr, motion, dreem_labels, expert_labels, rec_start) de EDA.load_night.
+        fontsize_scale: factor de escala de las fuentes.
+
+    Returns:
+        La figura de matplotlib.
+    '''
     hr, motion, dreem_labels, expert_labels, rec_start = night_data
 
-    # algunas noches traen filas corruptas Descartamos timestamps no plausibles
-    # (NaN o fuera del rango Unix esperable) para que no deformen el eje.
+    # descarta timestamps no plausibles (filas corruptas del dataset)
     hr = hr[hr['Timestamp'] > 1e9]
     motion = motion[motion['Timestamp'] > 1e9]
 
@@ -50,11 +59,10 @@ def _draw_night_overview(night_data: pd.DataFrame, fontsize_scale: float = 1.0):
 
     ax[0].plot(hr_hours, hr['hr'], color='tab:red')
 
-    # frecuencia instantánea de muestreo del IHR: 1/Δt entre timestamps consecutivos.
-    # El muestreo no es equiespaciado; fluctúa en torno a ~0.2 Hz (ver paper).
+    # frecuencia de muestreo del IHR = 1/Δt entre timestamps consecutivos (~0.2 Hz, irregular)
     ts = hr['Timestamp'].values
     dt = np.diff(ts)
-    valid = dt > 0  # timestamps duplicados (Δt=0) darían frecuencia infinita
+    valid = dt > 0  # Δt=0 (timestamps duplicados) daría frecuencia infinita
     inst_freq = 1.0 / dt[valid]
     ax[1].plot(hr_hours.values[1:][valid], inst_freq, color='tab:orange', linewidth=0.6)
     ax[1].set_yscale('log')
@@ -70,7 +78,7 @@ def _draw_night_overview(night_data: pd.DataFrame, fontsize_scale: float = 1.0):
     ax[0].set_ylabel('IHR\n[bpm]', fontsize=label_fs, rotation=0, ha='right', va='center', labelpad=2)
     ax[1].set_ylabel('IHR\nFreq [Hz]', fontsize=label_fs, rotation=0, ha='right', va='center', labelpad=2)
     ax[2].set_ylabel('Accel [g]', fontsize=label_fs, rotation=0, ha='right', va='center', labelpad=2)
-    # yticks del lado derecho; el ylabel queda pegado al eje (spine izquierda)
+    # yticks a la derecha, ylabel a la izquierda
     ax[0].tick_params(axis='both', labelsize=tick_fs, left=False, labelleft=False, right=True, labelright=True)
     ax[1].tick_params(axis='both', labelsize=tick_fs, left=False, labelleft=False, right=True, labelright=True)
     ax[2].tick_params(axis='both', labelsize=tick_fs, left=False, labelleft=False, right=True, labelright=True)
@@ -119,6 +127,16 @@ def _draw_night_overview(night_data: pd.DataFrame, fontsize_scale: float = 1.0):
     return fig
 
 def night_overview(night_data: pd.DataFrame, patient_nr: int = None, night_nr: int = None):
+    '''Guarda el overview de una noche en report/figures/ y lo muestra.
+
+    Args:
+        night_data: tupla (hr, motion, dreem_labels, expert_labels, rec_start) de EDA.load_night.
+        patient_nr: número de paciente; si se pasa, se usa en el nombre del archivo y el título.
+        night_nr: número de noche; si se pasa, se usa en el nombre del archivo y el título.
+
+    Returns:
+        None. Escribe el PNG en disco y muestra la figura.
+    '''
     save_fig = _draw_night_overview(night_data, fontsize_scale=1.5)
     file_name = f'night-overview-{patient_nr}-{night_nr}' if (patient_nr is not None and night_nr is not None) else 'night-overview'
     save_fig.savefig(FIG_DIR / f'{file_name}.png')
@@ -133,7 +151,15 @@ def night_overview(night_data: pd.DataFrame, patient_nr: int = None, night_nr: i
 
 def _resolved_valid_window(patient: int, night: int):
     '''Ventana válida de la noche con la MISMA resolución de gaps internos que usan
-    feature_extraction y build_night_sequences (trim_tail recorta valid_end).'''
+    feature_extraction y build_night_sequences (trim_tail recorta valid_end).
+
+    Args:
+        patient: número de paciente.
+        night: número de noche.
+
+    Returns:
+        Tupla (valid_start_s, valid_end_s) en segundos Unix.
+    '''
     vs, ve = EDA.valid_windows()[(patient, night)]
     res = EDA.internal_gap_resolution().get((patient, night))
     if res and res.get('action') == 'trim_tail' and res.get('new_valid_end') is not None:
@@ -142,12 +168,19 @@ def _resolved_valid_window(patient: int, night: int):
 
 def _draw_night_prediction_overview(patient: int, night: int, predictions: dict,
                                     fontsize_scale: float = 1.0):
-    '''
-    Como night_overview pero centrado en las ETIQUETAS: dibuja IHR + acelerometría y, debajo,
-    un hipnograma (banda de colores por época) para Expert, Dreem y cada modelo pasado en
-    `predictions`. Cada entrada de `predictions` es {nombre: (epochs, y_pred)} tal como los
-    devuelve `lstm.predict_night` (épocas alineadas al índice de la ventana limpia). Las épocas
-    sin predicción quedan Unknown (blanco).
+    '''Como night_overview pero centrado en las ETIQUETAS: dibuja IHR + acelerometría y, debajo,
+    un hipnograma (banda de colores por época) para Expert, Dreem y cada modelo. Las épocas sin
+    predicción quedan Unknown (blanco).
+
+    Args:
+        patient: número de paciente.
+        night: número de noche.
+        predictions: {nombre: (epochs, y_pred)} como los devuelve lstm.predict_night (épocas
+            alineadas al índice de la ventana limpia).
+        fontsize_scale: factor de escala de las fuentes.
+
+    Returns:
+        La figura de matplotlib.
     '''
     vs, ve = _resolved_valid_window(patient, night)
     hr, motion, dreem, expert, start = EDA.load_night_clean(patient, night, vs, ve)
@@ -205,10 +238,18 @@ def _draw_night_prediction_overview(patient: int, night: int, predictions: dict,
     return fig
 
 def night_prediction_overview(patient: int, night: int, predictions: dict, save: bool = False):
-    '''
-    Dibuja el overview de una noche con las predicciones de los modelos superpuestas como
-    hipnogramas. `predictions`: {nombre: (epochs, y_pred)} (salida de `lstm.predict_night`).
-    Ej.: night_prediction_overview(20, 1, {'LSTM tabular': (e1,p1), 'Híbrido': (e2,p2)}).
+    '''Dibuja el overview de una noche con las predicciones de los modelos superpuestas como
+    hipnogramas.
+
+    Args:
+        patient: número de paciente.
+        night: número de noche.
+        predictions: {nombre: (epochs, y_pred)} (salida de lstm.predict_night). Ej.:
+            {'LSTM tabular': (e1, p1), 'Híbrido': (e2, p2)}.
+        save: si es True, guarda el PNG en report/figures/ además de mostrarlo.
+
+    Returns:
+        None. Muestra la figura (y opcionalmente la guarda).
     '''
     fig = _draw_night_prediction_overview(patient, night, predictions, fontsize_scale=1.0)
     fig.suptitle(f'Night {night} — Patient {patient:02d}: expert / dreem / predicciones', fontsize=15)
@@ -218,13 +259,21 @@ def night_prediction_overview(patient: int, night: int, predictions: dict, save:
     plt.show()
 
 def _raw_vs_clean_overview(patient: int, night: int, fontsize_scale: float = 1.0, title: bool = True):
-    '''
-    Overview estilo night_overview que muestra una noche CRUDA y el efecto del procesamiento:
+    '''Overview estilo night_overview que muestra una noche CRUDA y el efecto del procesamiento:
     IHR y acelerometría con la ventana válida sombreada (verde) y lo removido en gris, más tres
     hipnogramas: Expert (cruda), Dreem (cruda) y Expert (procesada) donde las épocas descartadas
     (fuera de la ventana o sin cobertura de ambas señales: IHR<2 o acc<10) quedan en blanco.
     Reconstruye la decisión de procesamiento en vivo (ventana válida resuelta + filtro por época),
     así refleja el pipeline sin depender de los CSV/npz ya generados.
+
+    Args:
+        patient: número de paciente.
+        night: número de noche.
+        fontsize_scale: factor de escala de las fuentes.
+        title: si es True, agrega un suptitle con la ventana y las épocas conservadas.
+
+    Returns:
+        La figura de matplotlib.
     '''
     hr, motion, dreem, expert, rec_start = EDA.load_night(patient, night)
     hr = hr[hr['Timestamp'] > 1e9]
@@ -339,10 +388,17 @@ def _raw_vs_clean_overview(patient: int, night: int, fontsize_scale: float = 1.0
     return fig
 
 def raw_vs_clean_overview(patient: int, night: int, save: bool = False):
-    '''
-    Dibuja para una noche la señal cruda y el resultado del procesamiento (ventana válida +
+    '''Dibuja para una noche la señal cruda y el resultado del procesamiento (ventana válida +
     filtro por época): night_overview con la ventana sombreada y el hipnograma Expert antes
-    (cruda) y después (procesada). Ej.: raw_vs_clean_overview(20, 1).
+    (cruda) y después (procesada).
+
+    Args:
+        patient: número de paciente.
+        night: número de noche.
+        save: si es True, guarda el PNG en report/figures/ además de mostrarlo.
+
+    Returns:
+        None. Muestra la figura (y opcionalmente la guarda).
     '''
     if save:
         save_fig = _raw_vs_clean_overview(patient, night, fontsize_scale=1.3, title=False)
@@ -353,6 +409,15 @@ def raw_vs_clean_overview(patient: int, night: int, save: bool = False):
     plt.show()
 
 def _draw_class_distribution(distribution: dict, fontsize_scale: float = 1.0):
+    '''Barras del porcentaje de épocas por etapa, Expert vs Dreem.
+
+    Args:
+        distribution: {'expert': counts, 'dreem': counts}, conteos por etapa (0..5).
+        fontsize_scale: factor de escala de las fuentes.
+
+    Returns:
+        Tupla (fig, ax) de matplotlib.
+    '''
     label_fs = 12 * fontsize_scale
     tick_fs = 0 * fontsize_scale
     legend_fs = 11 * fontsize_scale
@@ -386,6 +451,14 @@ def _draw_class_distribution(distribution: dict, fontsize_scale: float = 1.0):
     return fig, ax
 
 def class_distribution(distribution: dict):
+    '''Guarda la distribución de etapas en report/figures/ y la muestra con título.
+
+    Args:
+        distribution: {'expert': counts, 'dreem': counts}, conteos por etapa (0..5).
+
+    Returns:
+        None. Escribe el PNG en disco y muestra la figura.
+    '''
     save_fig, _ = _draw_class_distribution(distribution, fontsize_scale=1.3)
     save_fig.savefig(FIG_DIR / 'stages-distribution.png')
     plt.close(save_fig)
@@ -397,6 +470,15 @@ def class_distribution(distribution: dict):
     plt.show()
 
 def _draw_confusion_matrix(cm: np.ndarray, fontsize_scale: float = 1.0):
+    '''Heatmap de la matriz de confusión, normalizada por fila y anotada con conteo y porcentaje.
+
+    Args:
+        cm: matriz de confusión (filas = Expert, columnas = Dreem), tamaño 6x6.
+        fontsize_scale: factor de escala de las fuentes.
+
+    Returns:
+        Tupla (fig, ax) de matplotlib.
+    '''
     label_fs = 12 * fontsize_scale
     tick_fs = 11 * fontsize_scale
     annot_fs = 11 * fontsize_scale
@@ -428,6 +510,14 @@ def _draw_confusion_matrix(cm: np.ndarray, fontsize_scale: float = 1.0):
     return fig, ax
 
 def confusion_matrix(cm: np.ndarray):
+    '''Guarda la matriz de confusión Expert vs Dreem en report/figures/ y la muestra.
+
+    Args:
+        cm: matriz de confusión (filas = Expert, columnas = Dreem), tamaño 6x6.
+
+    Returns:
+        None. Escribe el PNG en disco y muestra la figura.
+    '''
     save_fig, _ = _draw_confusion_matrix(cm, fontsize_scale=1.3)
     save_fig.savefig(FIG_DIR / 'label-confusion-matrix.png')
     plt.close(save_fig)
@@ -439,7 +529,18 @@ def confusion_matrix(cm: np.ndarray):
     plt.show()
 
 def problematic_nights_overview(json_path: Path = None, ncols: int = 4):
+    '''Grilla con las noches problemáticas de problematic_nights.json: por noche, IHR y
+    desviación de la acelerometría con la ventana válida (verde), los extremos truncados
+    (naranja) y los gaps internos (rojo). Muestra sólo las que pierden labels (truncamiento
+    de extremo o gap interno por encima del umbral).
 
+    Args:
+        json_path: ruta al problematic_nights.json; por defecto analysis/problematic_nights.json.
+        ncols: número de columnas de la grilla.
+
+    Returns:
+        None. Escribe el PNG en report/figures/ y muestra la figura.
+    '''
     ANALYSIS_DIR = Path(__file__).parent.parent / 'analysis'
     if json_path is None:
         json_path = ANALYSIS_DIR / 'problematic_nights.json'

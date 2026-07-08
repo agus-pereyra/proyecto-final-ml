@@ -30,10 +30,19 @@ except ImportError:
 # Modelo CNN 1D intra-época + entrenamiento
 # ---------------------------------------------------------------------------
 class CNN(nn.Module):
-    '''
-    CNN 1D que clasifica una época a partir de su señal cruda [150, 4]. Tres
-    bloques Conv1D->BatchNorm->ReLU->pool (32->64->128, el último con
-    AdaptiveAvgPool) + un clasificador denso a `num_classes`.
+    '''CNN 1D que clasifica una época a partir de su señal cruda [150, 4]. Tres bloques
+    Conv1D->BatchNorm->ReLU->pool (32->64->128, el último con AdaptiveAvgPool) + un
+    clasificador denso a `num_classes`.
+
+    Args (__init__):
+        num_classes: nº de clases de salida.
+
+    Atributos:
+        block1, block2, block3: bloques convolucionales (extracción de features).
+        classifier: MLP final que proyecta a los logits.
+
+    Métodos:
+        forward: mapea una época [B, 150, 4] a logits [B, num_classes].
     '''
     def __init__(self, num_classes=5):
         super(CNN, self).__init__()
@@ -73,7 +82,14 @@ class CNN(nn.Module):
         )
 
     def forward(self, x):
-        '''In: x [B, 150, 4]. Out: logits [B, num_classes].'''
+        '''Clasifica una época a partir de su señal cruda.
+
+        Args:
+            x: batch de épocas [B, 150, 4].
+
+        Returns:
+            Logits [B, num_classes].
+        '''
         x = x.permute(0, 2, 1)   # (batch, 150, 4) -> (batch, 4, 150) para Conv1d
         x = self.block1(x)
         x = self.block2(x)
@@ -84,11 +100,22 @@ class CNN(nn.Module):
 def train_model(model, train_loader, val_loader, class_weights,
                 epochs=50, lr=0.001, patience=10,
                 model_path='../../models/best_cnn.pth'):
-    '''
-    Entrena la CNN (Adam + CrossEntropy ponderada por clase, `ReduceLROnPlateau` y
-    early stopping sobre la val loss, guardando el mejor checkpoint en `model_path`).
-    In:  model, train_loader, val_loader, class_weights [5]; epochs/lr/patience/model_path opc.
-    Out: (model con el mejor checkpoint cargado, history) con train_loss/val_loss/val_acc por epoch.
+    '''Entrena la CNN (Adam + CrossEntropy ponderada por clase, `ReduceLROnPlateau` y early
+    stopping sobre la val loss, guardando el mejor checkpoint en `model_path`).
+
+    Args:
+        model: instancia de CNN a entrenar.
+        train_loader: DataLoader de train.
+        val_loader: DataLoader de validación.
+        class_weights: pesos de clase [5] para la CrossEntropy.
+        epochs: techo de epochs.
+        lr: learning rate.
+        patience: epochs sin mejora de val loss antes del early stopping.
+        model_path: ruta donde guardar el mejor checkpoint.
+
+    Returns:
+        Tupla (model con el mejor checkpoint cargado, history) con train_loss/val_loss/val_acc
+        por epoch.
     '''
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = model.to(device)
@@ -164,25 +191,21 @@ def train_model(model, train_loader, val_loader, class_weights,
 # ---------------------------------------------------------------------------
 def get_cnn_dataset(output_dir='../../data_extraction/processed_data',
                     n_patients=None, n_steps=150):
-    '''
-    Arma los tensores por época para la CNN a partir de la alineación
-    "fuente de verdad" de `data.py` (recStart convertido con timezone +
-    ventana válida de `quality_report`), NO del primer sample de señal.
+    '''Arma los tensores por época para la CNN a partir de la alineación "fuente de verdad" de
+    `data.py` (recStart convertido con timezone + ventana válida de `quality_report`), NO del
+    primer sample de señal. Por noche: `EDA.valid_windows()` da la ventana válida,
+    `EDA.internal_gap_resolution()` decide las de gap interno (discard se saltea entera,
+    trim_tail recorta valid_end) y `EDA.load_night_clean()` recorta hr/motion/labels a esa
+    ventana. Cada época se lleva a longitud fija (`n_steps` timesteps, 5 Hz) con 4 canales
+    [HR, mag_mean, mag_std, enmo_mean].
 
-    Para cada noche:
-    - `EDA.valid_windows()` da la ventana válida [valid_start, valid_end).
-    - `EDA.internal_gap_resolution()` decide las noches con gap interno:
-      `discard` se saltea entera; `trim_tail` recorta `valid_end` al prefijo
-      contiguo cubierto.
-    - `EDA.load_night_clean()` recorta hr/motion/labels a esa ventana y
-      devuelve `aligned_start`, el timestamp de inicio de la primera época
-      conservada. La época `i` es [aligned_start + i*30, aligned_start +
-      (i+1)*30) y le corresponde `expert[i]` por construcción.
+    Args:
+        output_dir: directorio destino de los .npz.
+        n_patients: si se pasa, procesa sólo los primeros n pacientes.
+        n_steps: cantidad de timesteps por época (150 => 5 Hz).
 
-    Cada época se lleva a longitud fija (`n_steps` timesteps, 5 Hz) con 4
-    canales [HR, mag_mean, mag_std, enmo_mean].
-    In:  output_dir (destino), n_patients (opc.), n_steps.
-    Out: nada; escribe un `.npz` por paciente con X (N, n_steps, 4) float32 e y (N,) int8.
+    Returns:
+        None. Escribe un `.npz` por paciente con X (N, n_steps, 4) float32 e y (N,) int8.
     '''
     windows = EDA.valid_windows()
     gap_res = EDA.internal_gap_resolution()
@@ -271,7 +294,16 @@ def get_cnn_dataset(output_dir='../../data_extraction/processed_data',
 # (antes en split_dataset_cnn.py)
 # ---------------------------------------------------------------------------
 class SleepDataset(Dataset):
-    '''Envuelve X [N, 150, 4] e y [N] para la CNN.'''
+    '''Dataset de PyTorch que envuelve la señal cruda por época y sus etiquetas para la CNN.
+
+    Atributos:
+        X: tensor float32 de señales [N, 150, 4].
+        y: tensor long de etiquetas [N].
+
+    Métodos:
+        __len__: cantidad de épocas.
+        __getitem__: devuelve (señal, etiqueta) de una época.
+    '''
     def __init__(self, X, y):
         self.X = torch.tensor(X, dtype=torch.float32)
         self.y = torch.tensor(y, dtype=torch.long)
@@ -285,11 +317,17 @@ class SleepDataset(Dataset):
 
 def load_and_split(processed_dir='../../data_extraction/processed_data',
                    val_size=5, test_size=4, random_seed=42):
-    '''
-    Split por paciente (un `.npz` = un sujeto) en train/val/test, estandariza por
-    canal con StandardScaler (fit sólo en train) y calcula los pesos de clase balanceados.
-    In:  processed_dir; val_size/test_size (n.º de pacientes); random_seed.
-    Out: (train, val, test) como pares (X, y), el scaler y los pesos de clase.
+    '''Split por paciente (un `.npz` = un sujeto) en train/val/test, estandariza por canal con
+    StandardScaler (fit sólo en train) y calcula los pesos de clase balanceados.
+
+    Args:
+        processed_dir: directorio con los .npz por paciente.
+        val_size: nº de pacientes para validación.
+        test_size: nº de pacientes para test.
+        random_seed: semilla del shuffle de pacientes.
+
+    Returns:
+        Tupla ((X_train, y_train), (X_val, y_val), (X_test, y_test), scaler, class_weights).
     '''
     rng = np.random.default_rng(random_seed)
 
@@ -332,10 +370,17 @@ def load_and_split(processed_dir='../../data_extraction/processed_data',
 
 def get_dataloaders(processed_dir='../../data_extraction/processed_data',
                     batch_size=64, val_size=5, test_size=4, random_seed=42):
-    '''
-    Arma los DataLoaders de train/val/test a partir de `load_and_split`.
-    In:  processed_dir, batch_size, val_size, test_size, random_seed.
-    Out: (train_loader, val_loader, test_loader, scaler, weights).
+    '''Arma los DataLoaders de train/val/test a partir de `load_and_split`.
+
+    Args:
+        processed_dir: directorio con los .npz por paciente.
+        batch_size: tamaño de batch de los DataLoaders.
+        val_size: nº de pacientes para validación.
+        test_size: nº de pacientes para test.
+        random_seed: semilla del shuffle de pacientes.
+
+    Returns:
+        Tupla (train_loader, val_loader, test_loader, scaler, class_weights).
     '''
     (X_train, y_train), (X_val, y_val), (X_test, y_test), scaler, weights = \
         load_and_split(processed_dir, val_size, test_size, random_seed)
