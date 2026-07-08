@@ -30,12 +30,12 @@ def print_metrics(y_true, y_pred, class_names=None, name=''):
     labels = list(range(len(class_names)))
     if name:
         print(name)
-    print(classification_report(y_true, y_pred, labels=labels,
-                                target_names=class_names, zero_division=0))
-    print(f"Cohen's Kappa:  {cohen_kappa_score(y_true, y_pred):.3f}")
-    print(f"F1 macro:       {f1_score(y_true, y_pred, labels=labels, average='macro', zero_division=0):.3f}")
-    print(f"F1 micro:       {f1_score(y_true, y_pred, labels=labels, average='micro', zero_division=0):.3f}")
-    print(f"Accuracy:       {accuracy_score(y_true, y_pred):.3f}")
+    print(classification_report(y_true, y_pred, labels=labels, target_names=class_names, 
+                                zero_division=0, digits=4))
+    print(f"Cohen's Kappa:  {cohen_kappa_score(y_true, y_pred):.4f}")
+    print(f"F1 macro:       {f1_score(y_true, y_pred, labels=labels, average='macro', zero_division=0):.4f}")
+    print(f"F1 micro:       {f1_score(y_true, y_pred, labels=labels, average='micro', zero_division=0):.4f}")
+    print(f"Accuracy:       {accuracy_score(y_true, y_pred):.4f}")
 
 
 def plot_confusion(y_true, y_pred, class_names=None, title='Matriz de confusión',
