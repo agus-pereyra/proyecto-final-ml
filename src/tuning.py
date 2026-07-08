@@ -1,3 +1,13 @@
+'''
+Búsqueda bayesiana de hiperparámetros (Optuna) para los modelos secuenciales de
+lstm.py (LSTM tabular e híbrido CNN1D->BiLSTM).
+
+Cada estudio maximiza el Cohen's Kappa de validación (sampler TPE + MedianPruner)
+y persiste en `models/searchs/<name>.db` (SQLite, resume entre corridas) y
+`<name>.csv` (log legible con toda la config + métricas de val, ordenado por
+kappa desc). `run_search` corre trials; `best_config` levanta la config ganadora.
+'''
+
 from dataclasses import fields, replace
 from pathlib import Path
 import tempfile
@@ -121,6 +131,11 @@ def _best_val_metrics(history: list) -> dict:
     return {k: float(best[k]) for k in _METRIC_COLS}
 
 def _make_objective(base_cfg: ConfigLSTM, space, tmp_dir: str, search_epochs=None):
+    '''
+    Construye la `objective` de Optuna: cada trial samplea del `space`, entrena
+    (checkpoint temporal, `search_epochs` si se dio), reporta el kappa de val por
+    epoch al MedianPruner y devuelve el mejor kappa de val (a maximizar).
+    '''
     def objective(trial: optuna.Trial) -> float:
         params = space(trial, base_cfg.hybrid)
         # checkpoint temporal por trial: no pisar el best_lstm.pt / best_hybrid.pt reales.

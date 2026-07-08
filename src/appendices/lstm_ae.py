@@ -1,3 +1,13 @@
+'''
+Autoencoder LSTM (apéndice): representación NO supervisada para sleep staging.
+
+Un `SeqAutoencoder` (BiLSTM encoder -> bottleneck latente por época -> LSTM
+decoder) se entrena a reconstruir las features por noche, sin usar las etiquetas.
+Luego `extract_embeddings` guarda el embedding z_t por época, que un XGBoost usa
+como input. Reutiliza el pipeline por noche de `src.lstm` (dataset, collate,
+split por sujeto y stats de train).
+'''
+
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -29,6 +39,11 @@ from src.lstm import (
 
 @dataclass
 class ConfigAE:
+    '''
+    Config del autoencoder LSTM: paths, arquitectura (`hidden_size`, `latent_dim` =
+    tamaño del embedding por época, `num_layers`, `dropout`), optimización y split
+    por sujeto. `feature_cols`/`input_size` se completan al armar los loaders.
+    '''
     features_path: str = '../../data_extraction/epoch_features.csv'
 
     # arquitectura
@@ -116,6 +131,7 @@ class SeqAutoencoder(nn.Module):
         return self.to_recon(g)                                   # [B, T, F]
 
     def forward(self, feats, lengths):
+        '''In: feats [B, T, F], lengths [B]. Out: (x_hat [B, T, F], z [B, T, L]).'''
         z = self.encode(feats, lengths)
         x_hat = self.decode(z, lengths)
         return x_hat, z

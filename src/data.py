@@ -1,5 +1,12 @@
 '''
-Módulo de carga, procesamiento y división de dataset
+Carga, control de calidad y recorte del dataset BIDSleep.
+
+Expone `EDA` (métodos estáticos para leer cada noche, computar el reporte de
+calidad, definir la ventana válida y resolver los gaps internos) y `DataSet`
+(Dataset de PyTorch para servir épocas desde un manifiesto). Todo el
+recorte/limpieza se hace en memoria: nunca se modifican los archivos del dataset.
+Las constantes de módulo (umbrales de gap, tolerancias, etc.) fijan los criterios
+de calidad usados por `quality_report`/`problematic_nights`.
 '''
 
 import json
@@ -43,10 +50,20 @@ STAGES_LABELS = {
 
 class EDA:
     '''
-    Clase de métodos estáticos para análisis y procesamiento de los datos
+    Métodos estáticos para el análisis exploratorio y el procesamiento de los
+    datos: carga por noche, reporte de calidad, ventana válida y resolución de
+    gaps internos. No mantiene estado; cada método opera sobre los archivos del
+    dataset (leídos, nunca escritos) o sobre el `quality_report.json` derivado.
     '''
     @staticmethod
     def load_night(patient: int, night: int):
+        '''
+        Carga una noche cruda (sin recortar a la ventana válida), filtrando filas
+        con timestamps corruptos (<=1e9).
+        In:  patient, night.
+        Out: (hr, motion, dreem_labels, expert_labels, rec_start); rec_start en
+             hora local America/New_York.
+        '''
         path = DATA_PATH / f'Bidslab{patient:02d}' / f'{night}'
         hr = pd.read_csv(path / 'hr.csv', header=None, names=['Timestamp', 'hr'])
         motion = pd.read_csv(path / 'motion.csv')
@@ -121,6 +138,12 @@ class EDA:
 
     @staticmethod
     def class_distribution():
+        '''
+        Cuenta las épocas de cada etapa (0..5) sobre todas las noches, para
+        experto y Dreem.
+        In:  (nada).
+        Out: {'expert': array[6], 'dreem': array[6]} (conteos por clase).
+        '''
         expert_counts = np.zeros(6, dtype=int)
         dreem_counts = np.zeros(6, dtype=int)
 
@@ -172,6 +195,12 @@ class EDA:
 
     @staticmethod
     def all_labels():
+        '''
+        Concatena las etiquetas de expert y dreem de todas las noches (recortando
+        cada una al largo común de ambos, que en 2 noches difieren).
+        In:  (nada).
+        Out: (expert, dreem), dos arrays 1D alineados época a época.
+        '''
         expert_labels = []
         dreem_labels = []
 
@@ -202,7 +231,9 @@ class EDA:
         labels respecto a la duración total del registro, y muestras
         de acelerometría/IHR con valores potencialmente inválidos.
 
-        Guarda el detalle completo (incluyendo listas de gaps) en un JSON.
+        In:  gap_threshold, acc_tol, ihr_max, edge_trim, save_path (todos opc.).
+        Out: nada; escribe `analysis/quality_report.json` con un registro por noche
+             (ventana válida, gaps, coberturas, conteos de inválidos, etc.).
         '''
         nights = []
         for patient in PATIENCE_NUMBERS:
@@ -524,6 +555,12 @@ class EDA:
 
     @staticmethod
     def plot_motion_comparison_3d(patient: int, night: int, step: int = 1000):
+        '''
+        Scatter 3D interactivo (plotly) de la acelerometría (x, y, z) de una
+        noche, coloreada por etapa, en dos paneles: etiquetas del experto vs.
+        Dreem. `step` submuestrea las filas para aligerar el render. Muestra la
+        figura; no devuelve nada.
+        '''
         # 1. Cargar datos
         path = DATA_PATH / f'Bidslab{patient:02d}' / f'{night}'
         motion = pd.read_csv(path / 'motion.csv')
@@ -585,9 +622,7 @@ class EDA:
         fig.show()
 
 class DataSet(torch.utils.data.Dataset):
-    '''
-    Clase para el manejo de splits/batches para el entrenamiento de redes
-    '''
+    '''Sirve épocas desde un manifiesto de tuplas (path, epoch_idx, label).'''
     def __init__(self, manifest):
         self.manifest = manifest
 

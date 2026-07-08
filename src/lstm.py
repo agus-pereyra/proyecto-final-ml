@@ -31,6 +31,12 @@ STAGE_NAMES = ['Wake', 'N1', 'N2', 'N3', 'REM']
 
 @dataclass
 class ConfigLSTM:
+    '''
+    Config unificada de los modelos secuenciales (LSTM tabular e híbrido): fija
+    modo, arquitectura, optimización y split. Con la misma seed/fracciones ambos
+    modelos comparten el split por sujeto. Cada campo está anotado abajo;
+    `feature_cols`/`input_size` se completan al armar los loaders.
+    '''
     # modo de operación
     hybrid: bool = False  # False = LSTM sobre features tabulares; True = CNN1D->BiLSTM sobre señal cruda
     features_path: str = '../data_extraction/epoch_features.csv'
@@ -66,6 +72,7 @@ class ConfigLSTM:
     input_size: int = None
 
 def set_seed(seed: int):
+    '''Fija la seed de random, numpy y torch (CPU+CUDA) para reproducibilidad.'''
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -208,7 +215,8 @@ class LSTM(nn.Module):
         )
 
     def forward(self, feats, lengths):
-        # feats [B, T, ...] -> encoder -> [B, T, F_enc]
+        '''In: feats [B, T, ...], lengths [B] (largo real de cada noche, para el
+        packing). Out: logits [B, T, N_CLASSES].'''
         x = self.encoder(feats)
         packed = pack_padded_sequence(x, lengths.cpu(), batch_first=True,
                                       enforce_sorted=False)
@@ -263,6 +271,7 @@ def class_weights(labels, device: str):
     return torch.tensor(w, dtype=torch.float32, device=device)
 
 def _collapse4(y):
+    '''Colapsa etiquetas de 5 a 4 clases (Wake / Light=N1+N2 / Deep=N3 / REM) vía COLLAPSE_4.'''
     return np.vectorize(COLLAPSE_4.get)(y)
 
 def compute_metrics(y_true, y_pred):
@@ -301,6 +310,25 @@ def collect_predictions(model, loader, device):
         ys.append(labels[valid].cpu().numpy())
         ps.append(pred[valid].cpu().numpy())
     return np.concatenate(ys), np.concatenate(ps)
+
+
+@torch.no_grad()
+def collect_probabilities(model, loader, device):
+    '''
+    Como collect_predictions pero devuelve (y_true, y_score) con y_score las
+    probabilidades softmax por clase [N, N_CLASSES] de las épocas válidas
+    (label != UNKNOWN). Alimenta metrics.roc_pr_curves para LSTM e híbrido.
+    '''
+    model.eval()
+    ys, probs = [], []
+    for feats, labels, lengths in loader:
+        feats, labels = feats.to(device), labels.to(device)
+        logits = model(feats, lengths)                   # [B, T, C]
+        p = torch.softmax(logits, dim=-1)                # [B, T, C]
+        valid = labels != UNKNOWN
+        ys.append(labels[valid].cpu().numpy())
+        probs.append(p[valid].cpu().numpy())
+    return np.concatenate(ys), np.concatenate(probs)
 
 
 @torch.no_grad()
@@ -516,8 +544,10 @@ def train(cfg: ConfigLSTM, encoder: EpochEncoder = None, epoch_callback=None, ve
 
     ckpt = torch.load(cfg.ckpt_path, map_location=device, weights_only=False)
     model.load_state_dict(ckpt['model_state'])
-    y_test, p_test = collect_predictions(model, loaders['test'], device)
+    y_test, s_test = collect_probabilities(model, loaders['test'], device)
+    p_test = s_test.argmax(1)
     test_m = compute_metrics(y_test, p_test)
+    test_m['y_true'], test_m['y_pred'], test_m['y_score'] = y_test, p_test, s_test
     if verbose:
         print(f'\nTEST ({modo}) — mejor ckpt (val kappa {ckpt["val_kappa"]:.4f}, epoch {ckpt["epoch"]}):')
         print(f'  kappa {test_m["kappa"]:.4f} | macroF1 {test_m["macro_f1"]:.4f} | acc {test_m["accuracy"]:.4f}')
@@ -539,8 +569,10 @@ def evaluate(cfg: ConfigLSTM, encoder: EpochEncoder = None):
     model = LSTM(cfg, encoder).to(device)
     model.load_state_dict(ckpt['model_state'])
 
-    y_test, p_test = collect_predictions(model, loaders['test'], device)
+    y_test, s_test = collect_probabilities(model, loaders['test'], device)
+    p_test = s_test.argmax(1)
     test_m = compute_metrics(y_test, p_test)
+    test_m['y_true'], test_m['y_pred'], test_m['y_score'] = y_test, p_test, s_test
     modo = 'híbrido CNN1D->BiLSTM' if cfg.hybrid else 'LSTM tabular'
     print(f'cargado {cfg.ckpt_path} ({modo}, val kappa {ckpt["val_kappa"]:.4f}, epoch {ckpt["epoch"]})')
     print(f'TEST -> kappa {test_m["kappa"]:.4f} | macroF1 {test_m["macro_f1"]:.4f} | acc {test_m["accuracy"]:.4f}')

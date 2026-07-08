@@ -23,6 +23,7 @@ META_COLS = ['subject', 'night', 'epoch', 'label', 'dreem']
 
 
 class TabularDataset(Dataset):
+    '''Envuelve la matriz de features X [N, F] y las etiquetas y [N].'''
     def __init__(self, X, y):
         self.X = torch.tensor(X, dtype=torch.float32)
         self.y = torch.tensor(y, dtype=torch.long)
@@ -37,7 +38,8 @@ class TabularDataset(Dataset):
 class MLP(nn.Module):
     '''
     Red densa para clasificación por época. Cada bloque oculto es
-    Linear -> BatchNorm -> ReLU -> Dropout; la última capa proyecta a las 5 etapas.
+    Linear -> BatchNorm -> ReLU -> Dropout; la última capa proyecta a `num_classes`.
+    `hidden_dims` son los tamaños de las capas ocultas.
     '''
     def __init__(self, input_dim, num_classes=5, hidden_dims=(256, 128, 64), dropout=0.3):
         super().__init__()
@@ -50,6 +52,7 @@ class MLP(nn.Module):
         self.net = nn.Sequential(*layers)
 
     def forward(self, x):
+        '''In: x [B, F]. Out: logits [B, num_classes] (sin softmax).'''
         return self.net(x)
 
 
@@ -126,7 +129,12 @@ def get_dataloaders(csv_path=None, batch_size=256, random_state=42, weight_mode=
 def train_model(model, train_loader, val_loader, class_weights,
                 epochs=100, lr=1e-3, patience=12, weight_decay=1e-4,
                 model_path=None):
-
+    '''
+    Entrena el MLP (Adam + CrossEntropy ponderada por clase, `ReduceLROnPlateau` y
+    early stopping sobre la val loss, restaurando el mejor epoch).
+    In:  model, train_loader, val_loader, class_weights [5]; epochs/lr/patience/... opc.
+    Out: (model entrenado, history) con history = train_loss/val_loss/val_acc por epoch.
+    '''
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = model.to(device)
 

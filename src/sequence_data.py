@@ -28,8 +28,10 @@ except ImportError:
 
 def _epoch_tensor(hr_win, acc_win, epoch_start, epoch_end, n_steps=150):
     '''
-    Tensor (n_steps, 4) [HR, mag_mean, mag_std, enmo_mean] de una época, idéntico
-    al que arma process_dataset_cnn.
+    Tensor de una época (idéntico al de process_dataset_cnn): HR interpolada +
+    media/desvío/ENMO por bin de la magnitud invariante. n_steps=150 => 5 Hz.
+    In:  hr_win, acc_win (muestras de la época), epoch_start/end [s], n_steps.
+    Out: np.ndarray float32 (n_steps, 4) [HR, mag_mean, mag_std, enmo_mean].
     '''
     bin_dur = 30 / n_steps
     grid = np.linspace(epoch_start, epoch_end, n_steps, dtype=np.float32)
@@ -57,6 +59,10 @@ def build_night_sequences(output_dir='../data_extraction/sequences', n_patients=
     Nota: se descartan las épocas con muy pocas muestras (igual que el pipeline
     original), lo que puede romper la contigüidad dentro de una noche; para esta
     primera versión se acepta (son pocas y aisladas).
+
+    In:  output_dir (destino), n_patients (opcional), n_steps.
+    Out: nada; escribe un `.npz` por paciente con `X (N,150,4)`, `y (N,)`,
+         `night_id (N,)` y `epoch (N,)`.
     '''
     windows = EDA.valid_windows()
     gap_res = EDA.internal_gap_resolution()

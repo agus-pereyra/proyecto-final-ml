@@ -1,3 +1,12 @@
+'''
+CNN 1D intra-época sobre la señal cruda por época [150, 4] (apéndice).
+
+Incluye el modelo `CNN` + su entrenamiento, el armado del dataset
+(`get_cnn_dataset`: señal cruda -> tensores `.npz` por época) y el split por
+paciente + StandardScaler + DataLoaders. Usa la alineación "fuente de verdad" de
+`data.py` (recStart con timezone + ventana válida de quality_report).
+'''
+
 import os
 from pathlib import Path
 from collections import defaultdict
@@ -21,6 +30,11 @@ except ImportError:
 # Modelo CNN 1D intra-época + entrenamiento
 # ---------------------------------------------------------------------------
 class CNN(nn.Module):
+    '''
+    CNN 1D que clasifica una época a partir de su señal cruda [150, 4]. Tres
+    bloques Conv1D->BatchNorm->ReLU->pool (32->64->128, el último con
+    AdaptiveAvgPool) + un clasificador denso a `num_classes`.
+    '''
     def __init__(self, num_classes=5):
         super(CNN, self).__init__()
 
@@ -59,6 +73,7 @@ class CNN(nn.Module):
         )
 
     def forward(self, x):
+        '''In: x [B, 150, 4]. Out: logits [B, num_classes].'''
         x = x.permute(0, 2, 1)   # (batch, 150, 4) -> (batch, 4, 150) para Conv1d
         x = self.block1(x)
         x = self.block2(x)
@@ -69,7 +84,12 @@ class CNN(nn.Module):
 def train_model(model, train_loader, val_loader, class_weights,
                 epochs=50, lr=0.001, patience=10,
                 model_path='../../models/best_cnn.pth'):
-
+    '''
+    Entrena la CNN (Adam + CrossEntropy ponderada por clase, `ReduceLROnPlateau` y
+    early stopping sobre la val loss, guardando el mejor checkpoint en `model_path`).
+    In:  model, train_loader, val_loader, class_weights [5]; epochs/lr/patience/model_path opc.
+    Out: (model con el mejor checkpoint cargado, history) con train_loss/val_loss/val_acc por epoch.
+    '''
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = model.to(device)
 
@@ -160,8 +180,9 @@ def get_cnn_dataset(output_dir='../../data_extraction/processed_data',
       (i+1)*30) y le corresponde `expert[i]` por construcción.
 
     Cada época se lleva a longitud fija (`n_steps` timesteps, 5 Hz) con 4
-    canales [HR, mag_mean, mag_std, enmo_mean]. Se guarda un `.npz` por
-    paciente con X (N, n_steps, 4) float32 e y (N,) int8.
+    canales [HR, mag_mean, mag_std, enmo_mean].
+    In:  output_dir (destino), n_patients (opc.), n_steps.
+    Out: nada; escribe un `.npz` por paciente con X (N, n_steps, 4) float32 e y (N,) int8.
     '''
     windows = EDA.valid_windows()
     gap_res = EDA.internal_gap_resolution()
@@ -250,6 +271,7 @@ def get_cnn_dataset(output_dir='../../data_extraction/processed_data',
 # (antes en split_dataset_cnn.py)
 # ---------------------------------------------------------------------------
 class SleepDataset(Dataset):
+    '''Envuelve X [N, 150, 4] e y [N] para la CNN.'''
     def __init__(self, X, y):
         self.X = torch.tensor(X, dtype=torch.float32)
         self.y = torch.tensor(y, dtype=torch.long)
@@ -263,7 +285,12 @@ class SleepDataset(Dataset):
 
 def load_and_split(processed_dir='../../data_extraction/processed_data',
                    val_size=5, test_size=4, random_seed=42):
-
+    '''
+    Split por paciente (un `.npz` = un sujeto) en train/val/test, estandariza por
+    canal con StandardScaler (fit sólo en train) y calcula los pesos de clase balanceados.
+    In:  processed_dir; val_size/test_size (n.º de pacientes); random_seed.
+    Out: (train, val, test) como pares (X, y), el scaler y los pesos de clase.
+    '''
     rng = np.random.default_rng(random_seed)
 
     npz_files = sorted(Path(processed_dir).glob('*.npz'))
@@ -305,7 +332,11 @@ def load_and_split(processed_dir='../../data_extraction/processed_data',
 
 def get_dataloaders(processed_dir='../../data_extraction/processed_data',
                     batch_size=64, val_size=5, test_size=4, random_seed=42):
-
+    '''
+    Arma los DataLoaders de train/val/test a partir de `load_and_split`.
+    In:  processed_dir, batch_size, val_size, test_size, random_seed.
+    Out: (train_loader, val_loader, test_loader, scaler, weights).
+    '''
     (X_train, y_train), (X_val, y_val), (X_test, y_test), scaler, weights = \
         load_and_split(processed_dir, val_size, test_size, random_seed)
 

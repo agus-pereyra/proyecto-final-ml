@@ -1,3 +1,12 @@
+'''
+Feature extraction para los modelos tabulares (XGBoost, MLP).
+
+Convierte cada noche del dataset en una tabla de épocas de 30 s con features de
+IHR (HRV en el dominio temporal) y de acelerometría (calculadas sobre la magnitud
+del vector, invariante a la orientación), más features de contexto entre épocas.
+La salida canónica es `data_extraction/epoch_features.csv`, una fila por época.
+'''
+
 import numpy as np
 import pandas as pd
 import gc
@@ -18,7 +27,12 @@ ROLL_WINDOW = 5             # ventana centrada (±2 épocas) para estadísticas 
 
 
 def _epoch_hr_features(hr, ts):
-    '''Features intra-época del IHR. `hr` en bpm, `ts` timestamps (s).'''
+    '''
+    Features intra-época del IHR (HRV en el dominio temporal).
+    In:  hr [bpm], ts [s] alineados.
+    Out: dict (hr_mean, hr_std, hr_median, hr_iqr, hr_rmssd, hr_pnn50, hr_slope,
+         hr_ptp, n_beats); todo 0 si no hay latidos válidos.
+    '''
     hr = hr[(hr > 0) & np.isfinite(hr)]
     n = len(hr)
     if n == 0:
@@ -50,8 +64,10 @@ def _epoch_hr_features(hr, ts):
 
 def _epoch_accel_features(mag):
     '''
-    Features intra-época de la acelerometría, todas a partir de la magnitud
-    del vector ||a|| = sqrt(x²+y²+z²) 
+    Features intra-época de la acelerometría, sobre la magnitud ||a||=sqrt(x²+y²+z²)
+    (invariante a la orientación).
+    In:  mag [g].
+    Out: dict (enmo_mean, enmo_std, acc_std, acc_ptp, immobility_frac, jerk_std).
     '''
     n = len(mag)
     if n == 0:
@@ -71,12 +87,12 @@ def _epoch_accel_features(mag):
 
 def _add_temporal_features(dfn, base_cols, lags=LAGS, roll=ROLL_WINDOW):
     '''
-    Agrega features de contexto entre épocas (calculadas dentro de la noche,
-    respetando el orden temporal): lags/leads, diferencia con la época previa,
-    estadísticas móviles centradas y épocas desde el último movimiento.
-
-    Los valores en los bordes (lags/leads/delta sin vecino) quedan como NaN;
-    XGBoost los maneja de forma nativa.
+    Agrega features de contexto entre épocas (dentro de la noche, en orden
+    temporal): lags/leads, diferencia con la época previa, estadísticas móviles
+    centradas y épocas desde el último movimiento. Los bordes sin vecino quedan
+    NaN (XGBoost los maneja nativo).
+    In:  dfn (épocas de una noche), base_cols, lags, roll.
+    Out: dfn con las columnas de contexto agregadas.
     '''
     new = {}
     for c in base_cols:
@@ -116,6 +132,11 @@ def feature_extraction(output_path: Path = None, resolve_internal_gaps: bool = T
     `EDA.internal_gap_resolution`, las noches con gaps agrupados al final se
     recortan a su prefijo contiguo cubierto (`trim_tail`) y las que tienen gaps
     interiores/dispersos se descartan enteras (`discard`).
+
+    In:  output_path (CSV destino, default data_extraction/epoch_features.csv),
+         resolve_internal_gaps.
+    Out: nada; escribe el CSV de cero (una fila por época válida: subject, night,
+         epoch, features base + de contexto, label del experto = target, dreem de referencia).
     '''
     root_dir = Path(__file__).resolve().parent.parent
     if output_path is None:
