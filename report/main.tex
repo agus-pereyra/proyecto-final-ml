@@ -48,11 +48,11 @@ Frente a la polisomnografía ---costosa y confinada al laboratorio---, los dispo
 
 La \emph{estadificación del sueño} (\emph{sleep staging}) ---asignar una etapa a cada época de $30$\,s de registro, según el estándar clínico AASM--- es central para el diagnóstico de trastornos como la apnea o el insomnio, pero hoy depende de la polisomnografía y de la anotación manual de un experto, lo que la vuelve cara e incómoda. Lograrla a partir de señales de muñeca abriría la puerta a un monitoreo accesible y prolongado en el tiempo.
 
-Abordamos la tarea como un problema de \textbf{clasificación multiclase supervisada}. La entrada de nuestro algoritmo es la IHR y la acelerometría triaxial de una época de $30$\,s (o su secuencia a lo largo de la noche), y utilizamos modelos de aprendizaje automático desde un \emph{baseline} tabular (XGBoost, MLP) hasta modelos secuenciales que utilizan la señal cruda (BiLSTM y un híbrido CNN---BiLSTM) para predecir la etapa del sueño. Como referencia se emplean las etiquetas de un experto (\emph{ground-truth}) y una referencia secundaria (y como nuestra competencia) las etiquetas de un dispositivo Dreem Headband, basado en EEG (electroencefalograma). El eje del trabajo es comparar esta progresión de modelos para cuantificar el aporte del \textbf{contexto temporal inter-época} ---la dependencia entre etapas contiguas--- frente a la clasificación de cada época de forma aislada.
+Abordamos la tarea como un problema de \textbf{clasificación multiclase supervisada}. La entrada de nuestro algoritmo es la IHR y la acelerometría triaxial de una época de $30$\,s (o su secuencia a lo largo de la noche), y utilizamos modelos de aprendizaje automático desde un \emph{baseline} tabular (XGBoost, MLP) hasta modelos secuenciales que modelan la dependencia temporal entre épocas (un BiLSTM sobre las características tabulares y un híbrido CNN---BiLSTM que aprende directamente de la señal cruda) para predecir la etapa del sueño. Como referencia se emplean las etiquetas de un experto (\emph{ground-truth}) y una referencia secundaria (y como nuestra competencia directa) las etiquetas de un dispositivo ``Dreem''. El eje del trabajo es comparar esta progresión de modelos para cuantificar el aporte del \textbf{contexto temporal inter-época} ---la dependencia entre etapas contiguas--- frente a la clasificación de cada época de forma aislada.
 
 \section{Conjunto de Datos y Características}
 
-PhysioNet BIDSleep~\cite{bidsleep} recopila señales fisiológicas tales como la frecuencia cardíaca instantánea (IHR) y tres ejes de acelerometría medidas con un Apple Watch a lo largo de 253 noches de 47 adultos sanos. Cada lapso de 30 segundos se encuentra etiquetado por dos fuentes diferentes (\emph{expert} y \emph{dreem}) con una etapa del sueño: 
+PhysioNet BIDSleep~\cite{bidsleep} recopila señales fisiológicas tales como la frecuencia cardíaca instantánea (IHR) y tres ejes de acelerometría medidas con un Apple Watch Series 6 a lo largo de 253 noches de 47 adultos sanos. Cada lapso de 30 segundos se encuentra etiquetado con una etapa del sueño por dos fuentes diferentes: \emph{expert} es la clasificación que realiza un especialista/técnico en polisomnografía siguiendo el estándar AASM\footnote{Reglas de la \emph{American Academy of Sleep Medicine}, el consenso clínico que define cómo puntuar las etapas del sueño a partir de la polisomnografía: divide el registro en épocas de \qty{30}{\second} y asigna a cada una una etapa (Wake, N1, N2, N3, REM) según criterios estandarizados sobre las señales de EEG, EOG y EMG.}, mientras que \emph{dreem} es la clasificación automática que realiza un dispositivo Dreem 2 Headband basado en EEG (electroencefalograma). Las etapas etiquetadas son:
 \begin{enumerate}[start=0]
     \item \textbf{Wake} (Despierto)
     \item \textbf{N1} (Sueño Ligero): etapa más superficial y la entrada al sueño. Suele ser la clase más dificil de detectar dado que es breve e inestable.
@@ -63,14 +63,12 @@ PhysioNet BIDSleep~\cite{bidsleep} recopila señales fisiológicas tales como la
 
 La distribución de clases (label expert) está fuertemente desbalanceada: $N_2$ ($37.5\%$) y REM ($25.9\%$) concentran la mayor parte de las épocas, seguidas de $N_3$ ($18.5\%$) y Wake ($11.0\%$), mientras que $N_1$ es marginal ($7.1\%$). Este desbalance justifica evaluar con $F1_{Macro}$, que pondera cada clase por igual, como así la utilización de funciones de costo ponderadas por clase como realizamos en los modelos finales.
 
-% El acuerdo entre las dos fuentes de etiquetado (Ec.~\ref{eq:cohen-kappa}) fija el techo de la tarea: $\kappa = 0.74$ global, máximo en $N_3$ ($0.90$) y REM ($0.85$) y mínimo en $N_1$ ($0.13$), la etapa más fugaz y ambigua. Su matriz de confusión (Fig.~\ref{fig:cm-expert-dreem}) muestra que el desacuerdo entre el experto y Dreem se concentra en etapas contiguas ($N_1$ vs.\ $N_2$ y Wake), las transiciones intrínsecamente más ambiguas de discriminar.
-
 \subsection{Procesamiento de la Señal}
 
 Realizamos una ardua y estricta limpieza de las señales dado que traían múltiples problemas:
 \begin{itemize}
     \item \textbf{Desalineación temporal}: el inicio de grabación viene en hora local (\emph{America/New\_York}) mientras que IHR y acelerometría están en Unix UTC. Se corrige convirtiendo el timestamp de inicio de grabación con su zona horaria antes de alinear señales y etiquetas.
-    \item \textbf{Filas corruptas}: registros con \emph{timestamps} inválidos se descartan filtrando \texttt{Timestamp}\,$>10^9$.
+    \item \textbf{Filas corruptas}: registros con \emph{timestamps} inválidos se descartan filtrando \texttt{Timestamp}\,$>10^9$. (Se encontraron noches con duraciones incluso mayores a \qty{30}{\hour})
     \item \textbf{Exceso de señal o de etiquetas en los bordes}: al inicio o al final de la noche una fuente puede cubrir un rango que las otras no. Como los modelos usan ambas señales, se define la \textbf{ventana válida} como la intersección entre el rango etiquetado y el de ambas señales continuas, recortando lo que sobre en cualquiera de los extremos.
     \item \textbf{\emph{Gaps} internos} (\emph{dropouts} reales del sensor): rompen la continuidad de la secuencia. Se resuelven recortando la cola cuando el prefijo limpio supera el $60\%$ (\emph{trim\_tail}) o descartando la noche entera si el hueco es interior/disperso.
     \item \textbf{\emph{Dropouts} dispersos de acelerometría}: en vez de descartar la noche completa (demasiado agresivo), se filtra \textbf{por época}, descartando sólo las épocas sin cobertura suficiente de ambas señales.
@@ -88,15 +86,13 @@ Además para poder enviar a los modelos las señales crudas como entrada debimos
 
 Como el IHR y la acelerometría se muestrean de forma irregular, cada época de \qty{30}{\second} se lleva a una grilla fija de $150$ \textit{timesteps} (\qty{5}{\hertz}, \textit{bins} de \qty{0.2}{\second}), obteniendo un tensor $150\times4$. El primer canal es el IHR \textbf{interpolado linealmente} sobre la grilla; los otros tres se derivan de la \textbf{magnitud} $\lVert a \rVert = \sqrt{x^2+y^2+z^2}$ (invariante a la orientación del reloj): media y desvío estándar de $\lVert a \rVert$ por \textit{bin} y media del \textbf{ENMO} (\emph{Euclidean Norm Minus One}) $=\max(\lVert a \rVert - 1,\,0)$, que aísla la aceleración por sobre la gravedad. Los \textit{bins} de acelerometría vacíos se rellenan por \textit{forward-fill}. Los cuatro canales se estandarizan con estadísticos de \emph{train}, ya que el IHR domina en magnitud sobre el ENMO.
 
-\subsection{Extracción de Características}
+\subsection{Extracción de Características}\label{sec:feature_extraction}
 
-Para tener un enfoque tabular del conjunto de datos resumimos cada época de \qty{30}{\second} en un vector de características \emph{handcrafted}, diseñadas a partir del conocimiento del dominio. Se distinguen dos grupos.
+Para tener un enfoque tabular del conjunto de datos resumimos cada época de \qty{30}{\second} en un vector de 122 características \emph{handcrafted}, diseñadas a partir del conocimiento del dominio. Se distinguen dos grupos.
 
 \textbf{Intra-época.} De la IHR extraemos estadísticos de nivel y dispersión (media, mediana, desvío, rango intercuartílico y rango) junto con descriptores clásicos de la \emph{variabilidad de la frecuencia cardíaca} (HRV) en el dominio del tiempo y la pendiente de la tendencia dentro de la época. Deliberadamente \textbf{no} incluimos las características espectrales de HRV (bandas LF: \qtyrange{0.04}{0.15}{\hertz} y HF: \qtyrange{0.15}{0.4}{\hertz})\footnote{Las bandas LF (\emph{Low Frequency}) y HF (\emph{High Frequency}) son rangos de frecuencia del espectro de la HRV asociados a la actividad de los sistemas nerviosos simpático y parasimpático; su relación LF/HF es un indicador clásico del tono autonómico durante el sueño.}: la IHR se muestrea a $\approx\!\qty{0.2}{\hertz}$, por lo que la frecuencia de Nyquist\footnote{Frecuencia máxima que una señal muestreada puede representar sin \emph{aliasing}: la mitad de la frecuencia de muestreo. Para reconstruir un componente de $f$\,Hz hay que muestrear a más de $2f$\,Hz.} ($\approx\!\qty{0.1}{\hertz}$) cae por debajo de esas bandas y las vuelve físicamente inobservables. De la acelerometría, calculadas siempre sobre la \textbf{magnitud} $\lVert a \rVert$ para ser invariantes a la orientación del reloj, obtenemos la media y el desvío del ENMO, la dispersión y el rango de la magnitud, la fracción de inmovilidad (proporción de muestras con $\lVert a\rVert\!\approx\!1g$) y la variabilidad del \emph{jerk} (derivada de la magnitud).
 
 \textbf{Inter-época (contexto temporal).} Como la etapa de sueño depende fuertemente de las épocas vecinas, cada característica intra-época se enriquece con su contexto: valores rezagados y adelantados, diferencias respecto de la época previa y estadísticos móviles (media y desvío en una ventana centrada), todo respetando los bordes de cada noche. Se añade además el tiempo transcurrido desde el último movimiento y la posición relativa de la época dentro de la noche.
-
-Esto totaliza $122$ características por época. Los valores indefinidos en los bordes (por los rezagos/adelantos) quedan como \texttt{NaN}, que XGBoost maneja de forma nativa y los modelos densos imputan.
 
 \subsection{Spliteo y Normalización}
 
@@ -106,43 +102,25 @@ Con el fin de evitar \emph{leakage} el conjunto se particiona \textbf{por pacien
 
 \subsection{Métricas de Rendimiento}
 
-Dado que se tienen dos criterios para tomar como \textit{ground-truth} (etiquetas del experto y del dispositivo Dreem) 
-usamos el \textbf{coeficiente Cohen's Kappa} \cite{cohen1960coefficient} para cuantificar cuán de acuerdo están entre sí.
+Dado que se tienen dos etiquetas (expert y dreem) usamos el \textbf{coeficiente Cohen's Kappa} $(\kappa)$ \cite{cohen1960coefficient} para cuantificar cuán de acuerdo están entre sí, y cuán de acuerdo están nuestros modelos con cada uno de estos.
 \cite{landis1977measurement}
 \begin{equation}
     \kappa = \frac{p_o - p_e}{1 - p_e}
     \label{eq:cohen-kappa}
 \end{equation}
+Donde $p_0$ es la proporción observada de acuerdo (accuracy) y $p_e$ es la porporción de acuerdo esperada por azar.
 
-El desempeño de clasificación se mide con el \textbf{F1-score macro} —media del F1 por clase, que
-al pesar todas las etapas por igual es la métrica más honesta bajo el desbalance—, complementado
-con la \textbf{accuracy} global y la \textbf{matriz de confusión}, que localiza entre qué etapas
-ocurren los errores.
+En la totalidad del dataset, este coeficiente de forma global (todas las clases) entre expert y dreem es de $\approx\!0.74$. El objetivo en principio es intentar lograr un nivel de acuerdo entre la clasificación de nuestro modelo y la clasificación que realiza el especialista en polisomnografía mayor al que tiene con la clasificación automática del dispositivo Dreem.
+
+El desempeño de clasificación se mide con el \textbf{weighted F1-score} —promedio ponderado según la distribución de clases cada F1-- complementado con la \textbf{accuracy} global y la \textbf{matriz de confusión}, que localiza entre qué etapas ocurren los errores.
 
 \subsection{Elección de modelos}
 
-Como \textbf{baseline} se usa \textbf{XGBoost} sobre \textit{features} por época: modelo tabular
-robusto, que maneja valores faltantes de forma nativa y da importancia interpretable. Las
-\textit{features} resumen IHR y HRV en el dominio temporal (RMSSD, pNN50, etc.) y la acelerometría
-sobre la magnitud $\lVert a \rVert$ —invariante a la orientación del reloj— e incorporan contexto
-inter-época (\textit{lags}, \textit{leads}, promedios móviles), clave en \textit{sleep staging}.
-Sobre esas mismas \textit{features} entrenamos además un \textbf{perceptrón multicapa (MLP)}, que
-contrasta una red densa con los árboles con idéntica entrada (imputando los \texttt{NaN} de borde
-y estandarizando, pasos que XGBoost no requiere).
+Como \textbf{baseline} utilizamos dos modelos tabulares que hacen uso del feature extraction explicado en la Sección~\ref{sec:feature_extraction}: \textbf{XGBoost} y un \textbf{perceptrón multicapa (MLP)}.
 
-Frente a ellos, una \textbf{CNN 1D} opera sobre la señal cruda, con la hipótesis de aprender la
-dinámica temporal —incluida la variabilidad de alta frecuencia de la acelerometría que las
-\textit{features} manuales descartan— sin \textit{feature engineering}. Cada época se lleva a un
-tensor $150 \times 4$ (IHR interpolada y tres estadísticos por bin de $0.2$s de la magnitud
-invariante: media, desvío y ENMO), que tres bloques convolucionales
-(Conv1D--BatchNorm--ReLU--\textit{pooling}) más \textit{global average pooling} y un clasificador
-denso mapean a las cinco etapas.
+Los modelos anteriores clasifican cada época de forma aislada, ignorando que el sueño es una secuencia con fuerte estructura temporal ---aunque las features fabricadas intentan dar soporte a esta. Para capturarla utilizamos dos modelos que utilizan redes recurrentes: 
 
-Los modelos anteriores clasifican cada época de forma aislada, ignorando que el sueño es una
-secuencia con fuerte estructura temporal. Para capturarla usamos una \textbf{LSTM bidireccional
-(BiLSTM)}~\cite{hochreiter1997lstm,schuster1997bilstm} \emph{many-to-many}: procesa la noche
-completa como secuencia y emite una etapa por época. En cada paso $t$, la celda LSTM regula un
-estado de memoria $c_t$ mediante tres compuertas —entrada $i_t$, olvido $f_t$ y salida $o_t$—:
+\textbf{LSTM bidireccional} (BiLSTM)~\cite{hochreiter1997lstm,schuster1997bilstm} \emph{many-to-many}: procesa la noche completa como secuencia y emite una etapa por época. A diferencia de lo que su nombre podría sugerir, este modelo no opera sobre la señal cruda sino sobre la \textbf{representación tabular} de la Sección~\ref{sec:feature_extraction}: la entrada de cada paso $x_t$ es el vector de $122$ características de la época $t$, de modo que la red modela la dinámica \emph{inter-época} sobre esas features. En cada paso $t$, la celda LSTM regula un estado de memoria $c_t$ mediante tres compuertas ---entrada $i_t$, olvido $f_t$ y salida $o_t$---:
 \begin{equation}
 \begin{aligned}
 (i_t, f_t, o_t) &= \sigma\!\big(W_{\{i,f,o\}}\, x_t + U_{\{i,f,o\}}\, h_{t-1} + b_{\{i,f,o\}}\big)\\
@@ -151,21 +129,16 @@ c_t &= f_t \odot c_{t-1} + i_t \odot \tilde{c}_t, \quad h_t = o_t \odot \tanh(c_
 \end{aligned}
 \label{eq:lstm}
 \end{equation}
-donde $\sigma$ es la sigmoide y $\odot$ el producto elemento a elemento. La variante
-\textbf{bidireccional} concatena una pasada hacia adelante y otra hacia atrás,
-$h_t = [\,\overrightarrow{h}_t \,;\, \overleftarrow{h}_t\,]$, de modo que cada época integra
-contexto pasado \emph{y} futuro (en \textit{sleep staging} \emph{offline} se dispone de la noche
-completa); un cabezal lineal da la predicción por época $\hat{y}_t = \mathrm{softmax}(W h_t + b)$.
+donde $\sigma$ es la función sigmoide y $\odot$ el producto elemento a elemento. La variante \textbf{bidireccional} concatena una pasada hacia adelante y otra hacia atrás, $h_t = [\,\overrightarrow{h}_t \,;\, \overleftarrow{h}_t\,]$, de modo que cada época integra contexto pasado \emph{y} futuro (en \emph{sleep staging offline} se dispone de la noche completa); un cabezal lineal da la predicción por época $\hat{y}_t = \mathrm{softmax}(W h_t + b)$.
 
-Por último, un \textbf{híbrido CNN--LSTM}, en la línea de SLAMSS~\cite{SLAMSS2023}, entrena ambos
-componentes \emph{end-to-end}: la CNN 1D actúa como \emph{encoder} intra-época —reemplaza la
-entrada $x_t$ de la BiLSTM por el vector que aprende de la señal cruda de cada época— y la BiLSTM
-modela la dinámica inter-época sobre esa secuencia.
+\textbf{Híbrido CNN1D--BiLSTM}: combina en una sola red dos escalas temporales que los modelos anteriores tratan por separado. Mientras el BiLSTM anterior depende de las características \emph{handcrafted}, aquí prescindimos de ellas y dejamos que la red aprenda su propia representación de cada época a partir de la señal cruda. Consta de dos etapas entrenadas \emph{end-to-end}:
+\begin{itemize}
+    \item \textbf{Encoder intra-época (CNN 1D).} Cada época se representa por su tensor crudo $\qty{150}\times4$ (Sec.~\ref{sec:feature_extraction}). Una red convolucional 1D ---apilando bloques de convolución, normalización y \emph{pooling}--- extrae de esa señal un vector de características $x_t$, capturando patrones locales dentro de la época que reemplazan a las features diseñadas a mano.
+    \item \textbf{Dinámica inter-época (BiLSTM).} La secuencia de vectores $\{x_t\}$ de toda la noche alimenta la misma BiLSTM \emph{many-to-many} de la Ec.~\ref{eq:lstm}, que modela la dependencia entre épocas contiguas y emite una etapa por cada una.
+\end{itemize}
+El entrenamiento conjunto es clave: los gradientes del clasificador fluyen hasta la CNN, de modo que la representación intra-época se optimiza específicamente para la tarea de \emph{staging}, en lugar de fijarse de antemano como en las features \emph{handcrafted}.
 
-Todos los modelos neuronales se entrenan minimizando la \textit{cross-entropy} ponderada por
-clase, $\mathcal{L} = -\sum_c w_c\, y_c \log \hat{y}_c$ con $w_c \propto 1/f_c$, para compensar el
-desbalance. En todos los casos la partición \textbf{agrupa por paciente}, para evitar
-\textit{leakage} y medir la generalización a sujetos nuevos, descartando \textit{Unknown}.
+Todos los modelos neuronales se entrenan minimizando la \textit{cross-entropy} ponderada por clase, $\mathcal{L} = -\sum_c w_c\, y_c \log \hat{y}_c$ con $w_c \propto 1/f_c$, para compensar el desbalance.
 
 \section{Resultados}
 
@@ -178,14 +151,17 @@ función de adquisición propone la configuración más prometedora, equilibrand
 explotación. El objetivo optimizado es el $F1_{Macro}$ sobre la partición de
 \emph{validación} —\textbf{agrupada por paciente}, igual que el resto del \textit{pipeline}, para no
 introducir \textit{leakage} en la selección— y la configuración ganadora se reentrena sobre
-\emph{train} y se reporta una única vez sobre \emph{test}. El espacio de búsqueda por modelo, el
+\emph{train+val} y se reporta una única vez sobre \emph{test}. El espacio de búsqueda por modelo, el
 número de iteraciones y los valores finales seleccionados se detallan en la Tabla~\ref{tab:resultados}.
 
 El baseline XGBoost alcanza $F1_{Macro} = 0.44$ y $\kappa = 0.32$
 (Ec.~\ref{eq:cohen-kappa}) frente al experto, con \textit{accuracy} del 51\%
 (Tabla~\ref{tab:resultados}). Pese al desbalance, capta señal discriminativa en las cinco clases,
 aunque lejos del techo humano ($\kappa = 0.74$); los errores se concentran entre etapas adyacentes
-($N_1$ vs.\ $N_2$ y REM).
+($N_1$ vs.\ $N_2$ y REM). En particular, $N_1$ ---transitoria y minoritaria--- resulta casi
+indetectable para un clasificador por época: su firma en IHR y movimiento apenas se distingue de
+$N_2$ o \textit{Wake}, de modo que, sin una dependencia temporal explícita, el modelo no logra
+aislarla.
 
 \begin{table}[!ht]
 \caption{Rendimiento en test (5 clases) frente al etiquetado del experto.}
@@ -209,7 +185,10 @@ $\kappa=0.35$): la red densa no mejora a los árboles sobre las mismas \textit{f
 mejora la aporta la \textbf{BiLSTM} ($F1_{Macro}=0.57$, $\kappa=0.463$), $\sim\!12$ puntos de
 $\kappa$ por encima, lo que confirma que el \textbf{contexto inter-época} es el factor
 determinante. El \textbf{híbrido} ($\kappa=0.357$) se ubica por debajo pese a operar sobre la
-señal cruda, sin compensar las \textit{features} diseñadas a mano. Todos los modelos permanecen
+señal cruda: su \emph{encoder} convolucional debe aprender de cero un extractor de
+características intra-época sobre un número acotado de noches y sin preentrenamiento, lo que lo
+vuelve propenso al sobreajuste y explica que la señal cruda no supere a las \textit{features}
+diseñadas a mano. Todos los modelos permanecen
 lejos de la cota de referencia (Dreem, $\kappa=0.717$): la brecha —limitación de las señales de
 muñeca frente al EEG— se concentra en $N_1$ y en las transiciones entre etapas contiguas. A
 continuación se presenta una segunda evaluación con 4 clases, agrupando $N_1$ y $N_2$ en
@@ -266,7 +245,46 @@ La AP, más informativa bajo desbalance, se mantiene sensiblemente por debajo de
 los modelos, lo que refleja la dificultad persistente en las clases minoritarias. Que la BiLSTM
 supere a los baselines también en la calidad del \emph{ranking} —y no sólo en la decisión final—
 indica que el contexto inter-época mejora la confianza asignada a cada etapa, no únicamente el
-umbral de corte.
+umbral de corte. A continuación se muestran las matrices de confusión sobre las 4 clases para los
+modelos \emph{baseline} XGBoost y MLP.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.49\linewidth]{figures/confusionXGBoost.png}%
+\includegraphics[width=0.49\linewidth]{figures/confusionMLP.png}
+\caption{Matrices de confusión (4 clases, test, vs. experto) de los modelos \emph{baseline}: XGBoost (izquierda) y MLP (derecha).}
+\label{fig:cm-baseline}
+\end{figure}
+
+Las matrices de confusión de los \emph{baselines} (Fig.~\ref{fig:cm-baseline}) presentan un patrón
+de error casi idéntico, coherente con su rendimiento equivalente. El error dominante es la
+confusión entre \textit{Light} y REM: ambos modelos clasifican como REM una fracción considerable
+de las épocas \textit{Light} (4819 en XGBoost, 4615 en MLP) y, en menor medida, a la inversa. Es
+esperable, dado que el REM presenta un IHR irregular difícil de distinguir del sueño ligero sin el
+contexto de la secuencia. La tendencia a sobre-predecir REM —reforzada por la ponderación de
+clases— también absorbe épocas de \textit{Wake}. En cambio, \textit{Deep} es la clase mejor
+resuelta, en consonancia con su firma fisiológica más nítida (IHR mínimo e inmovilidad). 
+
+Las matrices de confusión de los modelos secuenciales (Fig.~\ref{fig:cm-seq}) permiten
+contrastar el efecto del contexto inter-época frente a los \emph{baselines}.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.49\linewidth]{figures/confusionLSTM.png}%
+\includegraphics[width=0.49\linewidth]{figures/confusionLSTMhibrido.png}
+\caption{Matrices de confusión (4 clases, test, vs. experto) de los modelos secuenciales: BiLSTM tabular (izquierda) e híbrido CNN--BiLSTM (derecha).}
+\label{fig:cm-seq}
+\end{figure}
+
+Frente a los \emph{baselines}, ambos modelos secuenciales muestran una diagonal más marcada,
+prueba de que el contexto inter-época mejora la discriminación. La \textbf{BiLSTM tabular} exhibe
+la estructura más limpia: recupera bien \textit{Light} (8940) y \textit{Deep} (4671), y su error
+residual se concentra en la frontera \textit{Light}--REM, la más ambigua. El \textbf{híbrido}
+degrada ese patrón: tiende a sobre-predecir \textit{Wake} —absorbiendo épocas de \textit{Light}
+(1818) y \textit{Deep} (753)— y recupera menos \textit{Light} (7173), consistente con su menor
+$\kappa$. Esto sugiere que aprender la morfología intra-época de la señal cruda \emph{end-to-end}
+introduce ruido que no compensa las \textit{features} diseñadas a mano. En ambos, \textit{Deep}
+sigue siendo la clase mejor resuelta, por su firma fisiológica más nítida.
 
 \section{Conclusión}
 
