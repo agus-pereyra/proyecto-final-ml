@@ -44,14 +44,13 @@ sleep staging, recurrent neural networks, heart rate variability, accelerometry,
 
 \section{Introducción}
 
-Frente a la polisomnografía --costosa y confinada al laboratorio--, los dispositivos \emph{smart-watch} son capaces de registrar IHR (\emph{Instantaneous Heart Rate}) y acelerometría de forma continua y no invasiva, habilitando el monitoreo domiciliario.
+Frente a la polisomnografía ---costosa y confinada al laboratorio---, los dispositivos \emph{smart-watch} son capaces de registrar IHR (\emph{Instantaneous Heart Rate}) y acelerometría de forma continua y no invasiva, habilitando el monitoreo domiciliario.
 
-La \emph{estadificación del sueño} (\emph{sleep staging}) --asignar una etapa a cada época de $30$\,s de registro, según el estándar clínico AASM-- es central para el diagnóstico de trastornos como la apnea o el insomnio, pero hoy depende de la polisomnografía y de la anotación manual de un experto, lo que la vuelve cara e incómoda. Lograrla a partir de señales de muñeca abriría la puerta a un monitoreo accesible y prolongado en el tiempo.
+La \emph{estadificación del sueño} (\emph{sleep staging}) ---asignar una etapa a cada época de $30$\,s de registro, según el estándar clínico AASM--- es central para el diagnóstico de trastornos como la apnea o el insomnio, pero hoy depende de la polisomnografía y de la anotación manual de un experto, lo que la vuelve cara e incómoda. Lograrla a partir de señales de muñeca abriría la puerta a un monitoreo accesible y prolongado en el tiempo.
 
-Abordamos la tarea como un problema de \textbf{clasificación multiclase supervisada}. La entrada de nuestro algoritmo es la IHR y la acelerometría triaxial de una época de $30$\,s (o su secuencia a lo largo de la noche), y utilizamos modelos de aprendizaje automático desde un \emph{baseline} tabular (XGBoost, MLP) hasta modelos secuenciales que utilizan la señal cruda (BiLSTM y un híbrido CNN--BiLSTM) para predecir la etapa del sueño. Como referencia se emplean las etiquetas de un experto (\emph{ground-truth}) y una referencia secundaria (y como nuestra competencia) las etiquetas de un dispositivo Dreem Headband, basado en EEG (electroencefalograma). El eje del trabajo es comparar esta progresión de modelos para cuantificar el aporte del \textbf{contexto temporal inter-época} --la dependencia entre etapas contiguas-- frente a la clasificación de cada época de forma aislada.
+Abordamos la tarea como un problema de \textbf{clasificación multiclase supervisada}. La entrada de nuestro algoritmo es la IHR y la acelerometría triaxial de una época de $30$\,s (o su secuencia a lo largo de la noche), y utilizamos modelos de aprendizaje automático desde un \emph{baseline} tabular (XGBoost, MLP) hasta modelos secuenciales que utilizan la señal cruda (BiLSTM y un híbrido CNN---BiLSTM) para predecir la etapa del sueño. Como referencia se emplean las etiquetas de un experto (\emph{ground-truth}) y una referencia secundaria (y como nuestra competencia) las etiquetas de un dispositivo Dreem Headband, basado en EEG (electroencefalograma). El eje del trabajo es comparar esta progresión de modelos para cuantificar el aporte del \textbf{contexto temporal inter-época} ---la dependencia entre etapas contiguas--- frente a la clasificación de cada época de forma aislada.
 
 \section{Conjunto de Datos y Características}
-
 
 PhysioNet BIDSleep~\cite{bidsleep} recopila señales fisiológicas tales como la frecuencia cardíaca instantánea (IHR) y tres ejes de acelerometría medidas con un Apple Watch a lo largo de 253 noches de 47 adultos sanos. Cada lapso de 30 segundos se encuentra etiquetado por dos fuentes diferentes (\emph{expert} y \emph{dreem}) con una etapa del sueño: 
 \begin{enumerate}[start=0]
@@ -62,31 +61,46 @@ PhysioNet BIDSleep~\cite{bidsleep} recopila señales fisiológicas tales como la
     \item \textbf{REM} (\emph{Rapid Eye Movement}): también llamado ``sueño paradójico''. El EEG se parece al de vigilia pero el paciente está profundamente dormido, involucrando IHR irregular.
 \end{enumerate}
 
-Podemos observar un ejemplo de todos los datos contenidos en una noche en la Figura~\ref{fig:night}.
+La distribución de clases (label expert) está fuertemente desbalanceada: $N_2$ ($37.5\%$) y REM ($25.9\%$) concentran la mayor parte de las épocas, seguidas de $N_3$ ($18.5\%$) y Wake ($11.0\%$), mientras que $N_1$ es marginal ($7.1\%$). Este desbalance justifica evaluar con $F1_{Macro}$, que pondera cada clase por igual, como así la utilización de funciones de costo ponderadas por clase como realizamos en los modelos finales.
+
+% El acuerdo entre las dos fuentes de etiquetado (Ec.~\ref{eq:cohen-kappa}) fija el techo de la tarea: $\kappa = 0.74$ global, máximo en $N_3$ ($0.90$) y REM ($0.85$) y mínimo en $N_1$ ($0.13$), la etapa más fugaz y ambigua. Su matriz de confusión (Fig.~\ref{fig:cm-expert-dreem}) muestra que el desacuerdo entre el experto y Dreem se concentra en etapas contiguas ($N_1$ vs.\ $N_2$ y Wake), las transiciones intrínsecamente más ambiguas de discriminar.
+
+\subsection{Procesamiento de la Señal}
+
+Realizamos una ardua y estricta limpieza de las señales dado que traían múltiples problemas:
+\begin{itemize}
+    \item \textbf{Desalineación temporal}: el inicio de grabación viene en hora local (\emph{America/New\_York}) mientras que IHR y acelerometría están en Unix UTC. Se corrige convirtiendo el timestamp de inicio de grabación con su zona horaria antes de alinear señales y etiquetas.
+    \item \textbf{Filas corruptas}: registros con \emph{timestamps} inválidos se descartan filtrando \texttt{Timestamp}\,$>10^9$.
+    \item \textbf{Exceso de señal o de etiquetas en los bordes}: al inicio o al final de la noche una fuente puede cubrir un rango que las otras no. Como los modelos usan ambas señales, se define la \textbf{ventana válida} como la intersección entre el rango etiquetado y el de ambas señales continuas, recortando lo que sobre en cualquiera de los extremos.
+    \item \textbf{\emph{Gaps} internos} (\emph{dropouts} reales del sensor): rompen la continuidad de la secuencia. Se resuelven recortando la cola cuando el prefijo limpio supera el $60\%$ (\emph{trim\_tail}) o descartando la noche entera si el hueco es interior/disperso.
+    \item \textbf{\emph{Dropouts} dispersos de acelerometría}: en vez de descartar la noche completa (demasiado agresivo), se filtra \textbf{por época}, descartando sólo las épocas sin cobertura suficiente de ambas señales.
+\end{itemize}
+En la Figura~\ref{fig:problematic} se puede visualizar un ejemplo de cómo procesamos las señales de una noche completa.
 
 \begin{figure}[h]
-    \centering
-    \includegraphics[width=\linewidth]{figures/night-overview-0-1.png}
-    \caption{Ejemplo de la entrada del algoritmo: señales (IHR y acelerometría) e hipnograma de una noche completa (Paciente 00, Noche 1).}
-    \label{fig:night}
-\end{figure} 
+\centering
+\includegraphics[width=\linewidth]{figures/raw-vs-clean-20-1.png}
+\caption{Ejemplo de procesamiento de una noche (Paciente 20, noche 1). En verde la ventana válida ---delimitada por el final de la continuidad de la acelerometría--- y en rojo la zona problemática. La señal procesada finalmente dura hasta las 7.94hs conservando 949/1282 épocas.}
+\label{fig:problematic}
+\end{figure}
 
-A la hora de particionar el conjunto para el entrenamiento se realiza \textbf{por paciente} evitando así \textit{leakage} y midiendo la generalización a sujetos nuevos. 
-Se emplean dos representaciones: una \textbf{tabular} de $122$ \textit{features} por época y la
-\textbf{señal cruda} $150\times4$ en secuencias por noche, ambas estandarizadas con estadísticos de
-\emph{train}; los modelos densos imputan a la mediana los \texttt{NaN} de borde. El IHR se muestrea a
-$\approx\!0.2$\,Hz (Nyquist $\approx\!0.1$\,Hz), por debajo de las bandas LF/HF ($0.04$--$0.4$\,Hz),
-que resultan inobservables.
+Además para poder enviar a los modelos las señales crudas como entrada debimos realizar una representación acorde para que sea válida la señal en los modelos:
 
-Antes de modelar se aplica un control de calidad noche a noche. Sobre cada noche se computan
-\textit{gaps} temporales en IHR y acelerometría ($>60$s entre muestras), duración de la señal y
-fracción de acelerometría inválida ($|\lVert a \rVert - 1| > 0.5g$), y se define la
-\textbf{ventana válida} como la intersección entre el rango etiquetado y el de IHR \emph{continua}.
-Los desajustes se clasifican en \textit{signal\_excess} (señal sin etiqueta, se recorta),
-\textit{label\_trunc} (etiqueta sin señal, se recorta) e \textit{internal\_gap} (huecos $>10$ min).
-Estos últimos, verificados como \textit{dropouts} reales del sensor, se resuelven recortando la
-cola si el prefijo limpio supera el 60\% o descartando la noche. Todo se aplica en memoria, sin
-alterar los archivos originales.
+Como el IHR y la acelerometría se muestrean de forma irregular, cada época de \qty{30}{\second} se lleva a una grilla fija de $150$ \textit{timesteps} (\qty{5}{\hertz}, \textit{bins} de \qty{0.2}{\second}), obteniendo un tensor $150\times4$. El primer canal es el IHR \textbf{interpolado linealmente} sobre la grilla; los otros tres se derivan de la \textbf{magnitud} $\lVert a \rVert = \sqrt{x^2+y^2+z^2}$ (invariante a la orientación del reloj): media y desvío estándar de $\lVert a \rVert$ por \textit{bin} y media del \textbf{ENMO} (\emph{Euclidean Norm Minus One}) $=\max(\lVert a \rVert - 1,\,0)$, que aísla la aceleración por sobre la gravedad. Los \textit{bins} de acelerometría vacíos se rellenan por \textit{forward-fill}. Los cuatro canales se estandarizan con estadísticos de \emph{train}, ya que el IHR domina en magnitud sobre el ENMO.
+
+\subsection{Extracción de Características}
+
+Para tener un enfoque tabular del conjunto de datos resumimos cada época de \qty{30}{\second} en un vector de características \emph{handcrafted}, diseñadas a partir del conocimiento del dominio. Se distinguen dos grupos.
+
+\textbf{Intra-época.} De la IHR extraemos estadísticos de nivel y dispersión (media, mediana, desvío, rango intercuartílico y rango) junto con descriptores clásicos de la \emph{variabilidad de la frecuencia cardíaca} (HRV) en el dominio del tiempo y la pendiente de la tendencia dentro de la época. Deliberadamente \textbf{no} incluimos las características espectrales de HRV (bandas LF: \qtyrange{0.04}{0.15}{\hertz} y HF: \qtyrange{0.15}{0.4}{\hertz})\footnote{Las bandas LF (\emph{Low Frequency}) y HF (\emph{High Frequency}) son rangos de frecuencia del espectro de la HRV asociados a la actividad de los sistemas nerviosos simpático y parasimpático; su relación LF/HF es un indicador clásico del tono autonómico durante el sueño.}: la IHR se muestrea a $\approx\!\qty{0.2}{\hertz}$, por lo que la frecuencia de Nyquist\footnote{Frecuencia máxima que una señal muestreada puede representar sin \emph{aliasing}: la mitad de la frecuencia de muestreo. Para reconstruir un componente de $f$\,Hz hay que muestrear a más de $2f$\,Hz.} ($\approx\!\qty{0.1}{\hertz}$) cae por debajo de esas bandas y las vuelve físicamente inobservables. De la acelerometría, calculadas siempre sobre la \textbf{magnitud} $\lVert a \rVert$ para ser invariantes a la orientación del reloj, obtenemos la media y el desvío del ENMO, la dispersión y el rango de la magnitud, la fracción de inmovilidad (proporción de muestras con $\lVert a\rVert\!\approx\!1g$) y la variabilidad del \emph{jerk} (derivada de la magnitud).
+
+\textbf{Inter-época (contexto temporal).} Como la etapa de sueño depende fuertemente de las épocas vecinas, cada característica intra-época se enriquece con su contexto: valores rezagados y adelantados, diferencias respecto de la época previa y estadísticos móviles (media y desvío en una ventana centrada), todo respetando los bordes de cada noche. Se añade además el tiempo transcurrido desde el último movimiento y la posición relativa de la época dentro de la noche.
+
+Esto totaliza $122$ características por época. Los valores indefinidos en los bordes (por los rezagos/adelantos) quedan como \texttt{NaN}, que XGBoost maneja de forma nativa y los modelos densos imputan.
+
+\subsection{Spliteo y Normalización}
+
+Con el fin de evitar \emph{leakage} el conjunto se particiona \textbf{por paciente}, quedando 33 sujetos para el entrenamiento y luego 7 para la validación y 7 para el conjunto de test final. Luego ambas representaciones (tabular y señal cruda) se estandarizan con estadísticos de \emph{train}; los modelos densos imputan a la mediana los \texttt{NaN} de borde.
 
 \section{Metodología}
 
@@ -155,36 +169,6 @@ desbalance. En todos los casos la partición \textbf{agrupa por paciente}, para 
 
 \section{Resultados}
 
-\subsection{Análisis exploratorio y calidad de datos}
-
-La distribución de clases está fuertemente desbalanceada: $N_2$ ($37.5\%$) y REM ($25.9\%$)
-concentran la mayor parte de las épocas, seguidas de $N_3$ ($18.5\%$) y Wake ($11.0\%$), mientras
-que $N_1$ es marginal ($7.1\%$). Este desbalance justifica evaluar con $F1_{Macro}$, que pondera
-cada clase por igual, y compensar la frecuencia de clase durante el entrenamiento.
-
-\begin{figure}[h]
-\centering
-\includegraphics[width=\linewidth]{figures/raw-vs-clean-20-1.png}
-\caption{Ejemplo de procesamiento de una noche (Paciente 20, noche 1). La ventana válida (fondo verde) queda delimitada por el final de la continuidad de la acelerometría (IHR continúa) hasta las 7.94hs conservando 949/1282 épocas.}
-\label{fig:problematic}
-\end{figure}
-
-El control de calidad (Fig.~\ref{fig:problematic}) revela que \textbf{229 de 253 noches} (90.5\%)
-requieren alguna modificación —en su mayoría el trivial \textit{signal\_excess}— y que, al acotar
-la ventana válida por ambas señales (IHR y acelerometría), sólo \textbf{1} noche conserva un
-\textit{internal\_gap} genuino (P42 N4), que se descarta entera. La figura ilustra el procesamiento en una noche con \textit{gaps} (P20 N1):
-la ventana válida (verde) conserva el tramo aprovechable mientras se recorta la cola donde la
-acelerometría se interrumpe y aparecen \textit{gaps} de señal (rojo), y el hipnograma procesado descarta
-esas épocas del final.
-\vspace{-1.2em}
-
-El acuerdo entre las dos fuentes de etiquetado (Ec.~\ref{eq:cohen-kappa}) fija el techo de la
-tarea: $\kappa = 0.74$ global, máximo en $N_3$ ($0.90$) y REM ($0.85$) y mínimo en $N_1$ ($0.13$),
-la etapa más fugaz y ambigua. Su matriz de
-confusión (Fig.~\ref{fig:cm-expert-dreem}) muestra que el desacuerdo entre el experto y Dreem se
-concentra en etapas contiguas ($N_1$ vs.\ $N_2$ y Wake), las transiciones intrínsecamente más
-ambiguas de discriminar.
-
 \subsection{Clasificación}
 
 Los hiperparámetros de cada modelo se ajustan mediante \textbf{optimización bayesiana}: en lugar de
@@ -197,8 +181,8 @@ introducir \textit{leakage} en la selección— y la configuración ganadora se 
 \emph{train} y se reporta una única vez sobre \emph{test}. El espacio de búsqueda por modelo, el
 número de iteraciones y los valores finales seleccionados se detallan en la Tabla~\ref{tab:resultados}.
 
-El baseline XGBoost alcanza $F1_{Macro} = 0.47$ y $\kappa = 0.38$
-(Ec.~\ref{eq:cohen-kappa}) frente al experto, con \textit{accuracy} del 55\%
+El baseline XGBoost alcanza $F1_{Macro} = 0.44$ y $\kappa = 0.32$
+(Ec.~\ref{eq:cohen-kappa}) frente al experto, con \textit{accuracy} del 51\%
 (Tabla~\ref{tab:resultados}). Pese al desbalance, capta señal discriminativa en las cinco clases,
 aunque lejos del techo humano ($\kappa = 0.74$); los errores se concentran entre etapas adyacentes
 ($N_1$ vs.\ $N_2$ y REM).
@@ -209,16 +193,80 @@ aunque lejos del techo humano ($\kappa = 0.74$); los errores se concentran entre
 \centering
 \begin{tabular}{lccc}
 \hline
-\textbf{Modelo} & \textbf{$F1_{acro}$} & \textbf{Cohen's $\kappa$} & \textbf{Accuracy} \\
+\textbf{Modelo} & \textbf{$F1_{macro}$} & \textbf{Cohen's $\kappa$} & \textbf{Accuracy} \\
 \hline
-Dreem Label & --- & 0.74 &  -- \\
-XGBoost & 0.4707 & 0.3776 & \\
-MLP & & \\
-BiLSTM & 0.559 & 0.443\\
-Híbrido & & \\
+Dreem Label & 0.7076 & 0.7173 & 0.7924 \\
+XGBoost & 0.4450 & 0.3244 & 0.5063 \\
+MLP & 0.4515 & 0.3475 & 0.5253 \\
+BiLSTM & 0.5673 & 0.4630 & 0.5880 \\
+Híbrido & 0.4773 & 0.3570 & 0.4795 \\
 \hline
 \end{tabular}
 \end{table}
+
+Los dos \emph{baselines} tabulares rinden de forma equivalente (XGBoost $\kappa=0.32$, MLP
+$\kappa=0.35$): la red densa no mejora a los árboles sobre las mismas \textit{features}. La mayor
+mejora la aporta la \textbf{BiLSTM} ($F1_{Macro}=0.57$, $\kappa=0.463$), $\sim\!12$ puntos de
+$\kappa$ por encima, lo que confirma que el \textbf{contexto inter-época} es el factor
+determinante. El \textbf{híbrido} ($\kappa=0.357$) se ubica por debajo pese a operar sobre la
+señal cruda, sin compensar las \textit{features} diseñadas a mano. Todos los modelos permanecen
+lejos de la cota de referencia (Dreem, $\kappa=0.717$): la brecha —limitación de las señales de
+muñeca frente al EEG— se concentra en $N_1$ y en las transiciones entre etapas contiguas. A
+continuación se presenta una segunda evaluación con 4 clases, agrupando $N_1$ y $N_2$ en
+\textit{Light} y $N_3$ en \textit{Deep}, por la similitud fisiológica entre esas etapas y para
+simplificar la tarea de clasificación.
+
+\begin{table}[!ht]
+\caption{Rendimiento en test (4 clases) frente al etiquetado del experto.}
+\label{tab:resultados2}
+\centering
+\begin{tabular}{lccc}
+\hline
+\textbf{Modelo} & \textbf{$F1_{macro}$} & \textbf{Cohen's $\kappa$} & \textbf{Accuracy} \\
+\hline
+Dreem Label & 0.8457 & 0.8009 & 0.8669 \\
+XGBoost & 0.5538 & 0.3363 & 0.5419 \\
+MLP & 0.5681 & 0.3612 & 0.5600 \\
+BiLSTM & 0.6500 & 0.4907 & 0.6519 \\
+Híbrido & 0.5666 & 0.3927 & 0.5690 \\
+\hline
+\end{tabular}
+\end{table}
+
+Al agrupar en 4 clases todas las métricas mejoran, dado que se elimina la confusión $N_1$--$N_2$,
+la más frecuente. El ordenamiento entre modelos se mantiene: la \textbf{BiLSTM} continúa siendo
+el modelo de mejor desempeño ($F1_{Macro}=0.65$, $\kappa=0.49$) y el híbrido permanece por
+debajo, lo que confirma que la ventaja del contexto inter-época no depende de la granularidad del
+\textit{target}. La brecha con la cota de referencia (Dreem, $\kappa=0.80$) se reduce respecto de
+las 5 clases pero persiste, lo que evidencia que la limitación subyacente son las señales de
+muñeca y no la dificultad de separar $N_1$ de $N_2$.
+
+Como complemento a las métricas de decisión, la Tabla~\ref{tab:curvas} reporta el promedio macro
+(one-vs-rest, 5 clases) del área bajo las curvas ROC (AUC) y Precision-Recall (AP), que evalúan
+la calidad del \emph{ranking} de probabilidades de cada modelo con independencia del umbral de
+decisión.
+
+\begin{table}[!ht]
+\caption{Promedio macro (one-vs-rest, 5 clases) de las curvas ROC y Precision-Recall en test.}
+\label{tab:curvas}
+\centering
+\begin{tabular}{lcccc}
+\hline
+\textbf{Curva} & \textbf{XGBoost} & \textbf{MLP} & \textbf{BiLSTM} & \textbf{Híbrido} \\
+\hline
+AUC-ROC macro & 0.772 & 0.775 & 0.843 & 0.829 \\
+AP (PR) macro & 0.488 & 0.497 & 0.603 & 0.569 \\
+\hline
+\end{tabular}
+\end{table}
+
+Ambas curvas reproducen el mismo ordenamiento observado en las métricas de decisión: la BiLSTM
+lidera (AUC $=0.843$, AP $=0.603$), seguida del híbrido, con los baselines tabulares por detrás.
+La AP, más informativa bajo desbalance, se mantiene sensiblemente por debajo de la AUC en todos
+los modelos, lo que refleja la dificultad persistente en las clases minoritarias. Que la BiLSTM
+supere a los baselines también en la calidad del \emph{ranking} —y no sólo en la decisión final—
+indica que el contexto inter-época mejora la confianza asignada a cada etapa, no únicamente el
+umbral de corte.
 
 \section{Conclusión}
 
