@@ -63,7 +63,7 @@ PhysioNet BIDSleep~\cite{bidsleep} recopila señales fisiológicas tales como la
 
 La distribución de clases (label expert) está fuertemente desbalanceada: $N_2$ ($37.5\%$) y REM ($25.9\%$) concentran la mayor parte de las épocas, seguidas de $N_3$ ($18.5\%$) y Wake ($11.0\%$), mientras que $N_1$ es marginal ($7.1\%$). Este desbalance justifica evaluar con $F1_{Macro}$, que pondera cada clase por igual, como así la utilización de funciones de costo ponderadas por clase como realizamos en los modelos finales.
 
-\subsection{Procesamiento de la Señal}
+\subsection{Procesamiento de la Señal}\label{sec:proc_senal}
 
 Realizamos una ardua y estricta limpieza de las señales dado que traían múltiples problemas:
 \begin{itemize}
@@ -131,9 +131,9 @@ c_t &= f_t \odot c_{t-1} + i_t \odot \tilde{c}_t, \quad h_t = o_t \odot \tanh(c_
 \end{equation}
 donde $\sigma$ es la función sigmoide y $\odot$ el producto elemento a elemento. La variante \textbf{bidireccional} concatena una pasada hacia adelante y otra hacia atrás, $h_t = [\,\overrightarrow{h}_t \,;\, \overleftarrow{h}_t\,]$, de modo que cada época integra contexto pasado \emph{y} futuro (en \emph{sleep staging offline} se dispone de la noche completa); un cabezal lineal da la predicción por época $\hat{y}_t = \mathrm{softmax}(W h_t + b)$.
 
-\textbf{Híbrido CNN1D--BiLSTM}: combina en una sola red dos escalas temporales que los modelos anteriores tratan por separado. Mientras el BiLSTM anterior depende de las características \emph{handcrafted}, aquí prescindimos de ellas y dejamos que la red aprenda su propia representación de cada época a partir de la señal cruda. Consta de dos etapas entrenadas \emph{end-to-end}:
+\textbf{Híbrido CNN1D--BiLSTM}: (inspirado en los modelos SLAMSS~\cite{SLAMSS2023}) combina en una sola red dos escalas temporales que los modelos anteriores tratan por separado. Mientras el BiLSTM anterior depende de las características \emph{handcrafted}, aquí prescindimos de ellas y dejamos que la red aprenda su propia representación de cada época a partir de la señal cruda. Consta de dos etapas entrenadas \emph{end-to-end}:
 \begin{itemize}
-    \item \textbf{Encoder intra-época (CNN 1D).} Cada época se representa por su tensor crudo $\qty{150}\times4$ (Sec.~\ref{sec:feature_extraction}). Una red convolucional 1D ---apilando bloques de convolución, normalización y \emph{pooling}--- extrae de esa señal un vector de características $x_t$, capturando patrones locales dentro de la época que reemplazan a las features diseñadas a mano.
+    \item \textbf{Encoder intra-época (CNN 1D).} Cada época se representa por su tensor crudo $150\times4$ (Sec.~\ref{sec:proc_senal}). Una red convolucional 1D ---apilando bloques de convolución, normalización y \emph{pooling}--- extrae de esa señal un vector de características $x_t$, capturando patrones locales dentro de la época que reemplazan a las features diseñadas a mano.
     \item \textbf{Dinámica inter-época (BiLSTM).} La secuencia de vectores $\{x_t\}$ de toda la noche alimenta la misma BiLSTM \emph{many-to-many} de la Ec.~\ref{eq:lstm}, que modela la dependencia entre épocas contiguas y emite una etapa por cada una.
 \end{itemize}
 El entrenamiento conjunto es clave: los gradientes del clasificador fluyen hasta la CNN, de modo que la representación intra-época se optimiza específicamente para la tarea de \emph{staging}, en lugar de fijarse de antemano como en las features \emph{handcrafted}.
@@ -250,9 +250,12 @@ modelos \emph{baseline} XGBoost y MLP.
 
 \begin{figure}[h]
 \centering
-\includegraphics[width=0.49\linewidth]{figures/confusionXGBoost.png}%
-\includegraphics[width=0.49\linewidth]{figures/confusionMLP.png}
-\caption{Matrices de confusión (4 clases, test, vs. experto) de los modelos \emph{baseline}: XGBoost (izquierda) y MLP (derecha).}
+\includegraphics[width=0.49\linewidth]{figures/mlp-confussion-4.png}%
+\includegraphics[width=0.49\linewidth]{figures/xgboost-confussion-4.png}
+
+\includegraphics[width=0.49\linewidth]{figures/lstm-confussion-4.png}%
+\includegraphics[width=0.49\linewidth]{figures/híbrido-confussion-4.png}
+\caption{Matrices de confusión (4 clases, test, vs. experto) de los modelos}
 \label{fig:cm-baseline}
 \end{figure}
 
@@ -270,12 +273,10 @@ contrastar el efecto del contexto inter-época frente a los \emph{baselines}.
 
 \begin{figure}[h]
 \centering
-\includegraphics[width=0.49\linewidth]{figures/confusionLSTM.png}%
-\includegraphics[width=0.49\linewidth]{figures/confusionLSTMhibrido.png}
-\caption{Matrices de confusión (4 clases, test, vs. experto) de los modelos secuenciales: BiLSTM tabular (izquierda) e híbrido CNN--BiLSTM (derecha).}
-\label{fig:cm-seq}
+\includegraphics[width=\linewidth]{figures/night-predictions-31-1.png}
+\caption{Datos de una noche (Paciente 31, Noche 1) junto a las etiquetas \emph{expert} y \emph{dreem} y además las clasificaciones de los modelos secuenciales \emph{BiLSTM} e \emph{Híbrido}}
+\label{fig:night-predictions}
 \end{figure}
-
 Frente a los \emph{baselines}, ambos modelos secuenciales muestran una diagonal más marcada,
 prueba de que el contexto inter-época mejora la discriminación. La \textbf{BiLSTM tabular} exhibe
 la estructura más limpia: recupera bien \textit{Light} (8940) y \textit{Deep} (4671), y su error

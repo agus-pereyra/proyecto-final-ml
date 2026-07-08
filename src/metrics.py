@@ -1,3 +1,6 @@
+import re
+from pathlib import Path
+
 import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.metrics import (
@@ -8,6 +11,16 @@ from sklearn.metrics import (
 from sklearn.preprocessing import label_binarize
 
 STAGE_NAMES = ['Wake', 'N1', 'N2', 'N3', 'REM']
+
+FIG_DIR = Path(__file__).parent.parent / 'report' / 'figures'
+
+
+def _slugify(text):
+    '''Convierte un título en un nombre de archivo (minúsculas, guiones, sin acentos raros).'''
+    text = text.strip().lower()
+    text = re.sub(r'[\s_]+', '-', text)
+    text = re.sub(r'[^a-z0-9\-]', '', text)
+    return re.sub(r'-+', '-', text).strip('-')
 
 def _resolve_class_names(y_true, y_pred, class_names):
     '''Nombres de clase por defecto: las 5 etapas si entran, si no genéricos.'''
@@ -39,11 +52,14 @@ def print_metrics(y_true, y_pred, class_names=None, name=''):
 
 
 def plot_confusion(y_true, y_pred, class_names=None, title='Matriz de confusión',
-                   normalize=False, ax=None, figsize=(6, 5)):
+                   normalize=False, ax=None, figsize=(6, 5), save=False):
     '''
     Grafica la matriz de confusión (5 clases por defecto; `normalize=True` la
     normaliza por fila = recall por clase).
     In:  y_true, y_pred [N]; class_names, title, normalize, ax opcionales.
+         save: guarda el PNG en report/figures/ (igual que plots.py). True -> nombre
+         derivado del título; str -> ese nombre de archivo (sin extensión). Ignorado si
+         se pasa un `ax` externo.
     Out: (fig, ax).
     '''
     y_true = np.asarray(y_true)
@@ -53,7 +69,8 @@ def plot_confusion(y_true, y_pred, class_names=None, title='Matriz de confusión
     cm = confusion_matrix(y_true, y_pred, labels=labels,
                           normalize='true' if normalize else None)
     disp = ConfusionMatrixDisplay(cm, display_labels=class_names)
-    if ax is None:
+    ax_was_none = ax is None
+    if ax_was_none:
         fig, ax = plt.subplots(figsize=figsize)
     else:
         fig = ax.figure
@@ -63,6 +80,10 @@ def plot_confusion(y_true, y_pred, class_names=None, title='Matriz de confusión
     fig.tight_layout()
     ax.set_ylabel('expert label')
     ax.set_xlabel('predicted label')
+    if save and ax_was_none:
+        name = save if isinstance(save, str) else _slugify(title)
+        FIG_DIR.mkdir(parents=True, exist_ok=True)
+        fig.savefig(FIG_DIR / f'{name}.png', dpi=200, bbox_inches='tight')
     return fig, ax
 
 def cohen_kappa_per_class(y_true, y_pred, n_classes=6):
