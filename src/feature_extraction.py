@@ -27,11 +27,15 @@ ROLL_WINDOW = 5             # ventana centrada (±2 épocas) para estadísticas 
 
 
 def _epoch_hr_features(hr, ts):
-    '''
-    Features intra-época del IHR (HRV en el dominio temporal).
-    In:  hr [bpm], ts [s] alineados.
-    Out: dict (hr_mean, hr_std, hr_median, hr_iqr, hr_rmssd, hr_pnn50, hr_slope,
-         hr_ptp, n_beats); todo 0 si no hay latidos válidos.
+    '''Features intra-época del IHR (HRV en el dominio temporal).
+
+    Args:
+        hr: valores de IHR [bpm].
+        ts: timestamps [s] alineados con hr.
+
+    Returns:
+        Dict con hr_mean, hr_std, hr_median, hr_iqr, hr_rmssd, hr_pnn50, hr_slope, hr_ptp,
+        n_beats; todo 0 si no hay latidos válidos.
     '''
     hr = hr[(hr > 0) & np.isfinite(hr)]
     n = len(hr)
@@ -63,11 +67,14 @@ def _epoch_hr_features(hr, ts):
 
 
 def _epoch_accel_features(mag):
-    '''
-    Features intra-época de la acelerometría, sobre la magnitud ||a||=sqrt(x²+y²+z²)
+    '''Features intra-época de la acelerometría, sobre la magnitud ‖a‖=√(x²+y²+z²)
     (invariante a la orientación).
-    In:  mag [g].
-    Out: dict (enmo_mean, enmo_std, acc_std, acc_ptp, immobility_frac, jerk_std).
+
+    Args:
+        mag: magnitud del acelerómetro [g].
+
+    Returns:
+        Dict con enmo_mean, enmo_std, acc_std, acc_ptp, immobility_frac, jerk_std.
     '''
     n = len(mag)
     if n == 0:
@@ -86,13 +93,18 @@ def _epoch_accel_features(mag):
 
 
 def _add_temporal_features(dfn, base_cols, lags=LAGS, roll=ROLL_WINDOW):
-    '''
-    Agrega features de contexto entre épocas (dentro de la noche, en orden
-    temporal): lags/leads, diferencia con la época previa, estadísticas móviles
-    centradas y épocas desde el último movimiento. Los bordes sin vecino quedan
-    NaN (XGBoost los maneja nativo).
-    In:  dfn (épocas de una noche), base_cols, lags, roll.
-    Out: dfn con las columnas de contexto agregadas.
+    '''Agrega features de contexto entre épocas (dentro de la noche, en orden temporal):
+    lags/leads, diferencia con la época previa, estadísticas móviles centradas y épocas desde
+    el último movimiento. Los bordes sin vecino quedan NaN (XGBoost los maneja nativo).
+
+    Args:
+        dfn: DataFrame con las épocas de una noche (en orden temporal).
+        base_cols: columnas base sobre las que calcular el contexto.
+        lags: desfasajes (en épocas) para lags/leads.
+        roll: tamaño de la ventana centrada para las estadísticas móviles.
+
+    Returns:
+        dfn con las columnas de contexto agregadas.
     '''
     new = {}
     for c in base_cols:
@@ -117,26 +129,23 @@ def _add_temporal_features(dfn, base_cols, lags=LAGS, roll=ROLL_WINDOW):
 
 
 def feature_extraction(output_path: Path = None, resolve_internal_gaps: bool = True):
-    '''
-    Convierte cada noche a una tabla de épocas (30 s) con features de IHR y
-    acelerometría para modelos tabulares (XGBoost).
-
-    Las features de acelerometría se calculan sobre la magnitud del vector
-    (invariante a la orientación del reloj). Además de las features intra-época
-    se agregan features de contexto entre épocas (lags, deltas, ventanas
-    móviles). El recorte a la ventana válida se aplica en memoria vía
-    `EDA.load_night_clean` (fuente de verdad: `quality_report.json`), sin tocar
-    los CSV.
-
-    Manejo de gaps internos (`resolve_internal_gaps=True`): vía
-    `EDA.internal_gap_resolution`, las noches con gaps agrupados al final se
-    recortan a su prefijo contiguo cubierto (`trim_tail`) y las que tienen gaps
+    '''Convierte cada noche a una tabla de épocas (30 s) con features de IHR y acelerometría
+    para modelos tabulares (XGBoost). Las features de acelerometría se calculan sobre la
+    magnitud del vector (invariante a la orientación del reloj) y, además de las intra-época,
+    se agregan features de contexto entre épocas (lags, deltas, ventanas móviles). El recorte
+    a la ventana válida se aplica en memoria vía `EDA.load_night_clean` (fuente de verdad:
+    `quality_report.json`), sin tocar los CSV. Con `resolve_internal_gaps=True`, las noches
+    con gaps agrupados al final se recortan a su prefijo contiguo (`trim_tail`) y las de gaps
     interiores/dispersos se descartan enteras (`discard`).
 
-    In:  output_path (CSV destino, default data_extraction/epoch_features.csv),
-         resolve_internal_gaps.
-    Out: nada; escribe el CSV de cero (una fila por época válida: subject, night,
-         epoch, features base + de contexto, label del experto = target, dreem de referencia).
+    Args:
+        output_path: CSV destino; por defecto data_extraction/epoch_features.csv.
+        resolve_internal_gaps: si es True, aplica trim_tail/discard vía
+            EDA.internal_gap_resolution.
+
+    Returns:
+        None. Escribe el CSV de cero (una fila por época válida: subject, night, epoch,
+        features base + de contexto, label del experto = target, dreem de referencia).
     '''
     root_dir = Path(__file__).resolve().parent.parent
     if output_path is None:

@@ -23,7 +23,16 @@ META_COLS = ['subject', 'night', 'epoch', 'label', 'dreem']
 
 
 class TabularDataset(Dataset):
-    '''Envuelve la matriz de features X [N, F] y las etiquetas y [N].'''
+    '''Dataset de PyTorch que envuelve la matriz de features y sus etiquetas.
+
+    Atributos:
+        X: tensor float32 de features [N, F].
+        y: tensor long de etiquetas [N].
+
+    Métodos:
+        __len__: cantidad de muestras.
+        __getitem__: devuelve (features, etiqueta) de una muestra.
+    '''
     def __init__(self, X, y):
         self.X = torch.tensor(X, dtype=torch.float32)
         self.y = torch.tensor(y, dtype=torch.long)
@@ -36,10 +45,20 @@ class TabularDataset(Dataset):
 
 
 class MLP(nn.Module):
-    '''
-    Red densa para clasificación por época. Cada bloque oculto es
+    '''Red densa (feedforward) para clasificación por época. Cada bloque oculto es
     Linear -> BatchNorm -> ReLU -> Dropout; la última capa proyecta a `num_classes`.
-    `hidden_dims` son los tamaños de las capas ocultas.
+
+    Args (__init__):
+        input_dim: nº de features de entrada.
+        num_classes: nº de clases de salida.
+        hidden_dims: tamaños de las capas ocultas.
+        dropout: probabilidad de dropout de cada bloque.
+
+    Atributos:
+        net: la red secuencial que aplica los bloques y la capa de salida.
+
+    Métodos:
+        forward: mapea features [B, F] a logits [B, num_classes].
     '''
     def __init__(self, input_dim, num_classes=5, hidden_dims=(256, 128, 64), dropout=0.3):
         super().__init__()
@@ -52,24 +71,33 @@ class MLP(nn.Module):
         self.net = nn.Sequential(*layers)
 
     def forward(self, x):
-        '''In: x [B, F]. Out: logits [B, num_classes] (sin softmax).'''
+        '''Pasa las features por la red densa.
+
+        Args:
+            x: batch de features [B, F].
+
+        Returns:
+            Logits [B, num_classes] (sin softmax).
+        '''
         return self.net(x)
 
 
 def get_dataloaders(csv_path=None, batch_size=256, random_state=42, weight_mode='sqrt'):
-    '''
-    Lee el CSV de features, descarta Unknown (clase 5), particiona por paciente
-    (dev/test 80/20 y dev -> train/val 80/20), imputa NaN + estandariza (fiteado
-    sólo en train) y arma los DataLoaders. Devuelve los pesos de clase, las
-    etiquetas de Dreem del test (para comparar) y la dimensión de entrada. Si
-    `csv_path` es None, busca el CSV en `data_extraction/` y `data/`.
+    '''Lee el CSV de features, descarta Unknown (clase 5), particiona por paciente (dev/test
+    80/20 y dev -> train/val 80/20), imputa NaN + estandariza (fiteado sólo en train) y arma
+    los DataLoaders.
 
-    `weight_mode` controla los pesos de clase de la loss:
-    - 'balanced': pesos proporcionales a 1/frecuencia (maximiza F1-macro, pero
-      sobre-predice las clases chicas y baja accuracy/kappa).
-    - 'sqrt': raíz de los balanced, un punto intermedio (mejor accuracy/kappa
-      manteniendo recall razonable en las minoritarias).
-    - 'none': sin pesos (maximiza accuracy/kappa, ignora las clases chicas).
+    Args:
+        csv_path: ruta al epoch_features.csv; si es None, lo busca en data_extraction/ y data/.
+        batch_size: tamaño de batch de los DataLoaders.
+        random_state: semilla del split por paciente.
+        weight_mode: pesos de clase de la loss. 'balanced' (1/frecuencia, maximiza F1-macro
+            pero baja accuracy/kappa), 'sqrt' (raíz de los balanced, punto intermedio) o
+            'none' (sin pesos, maximiza accuracy/kappa).
+
+    Returns:
+        Tupla (train_loader, val_loader, test_loader, class_weights, dreem_test, input_dim),
+        donde dreem_test son las etiquetas de Dreem del test e input_dim el nº de features.
     '''
     if csv_path is None:
         candidates = ['../data_extraction/epoch_features.csv', '../data/epoch_features.csv']
@@ -129,11 +157,22 @@ def get_dataloaders(csv_path=None, batch_size=256, random_state=42, weight_mode=
 def train_model(model, train_loader, val_loader, class_weights,
                 epochs=100, lr=1e-3, patience=12, weight_decay=1e-4,
                 model_path=None):
-    '''
-    Entrena el MLP (Adam + CrossEntropy ponderada por clase, `ReduceLROnPlateau` y
-    early stopping sobre la val loss, restaurando el mejor epoch).
-    In:  model, train_loader, val_loader, class_weights [5]; epochs/lr/patience/... opc.
-    Out: (model entrenado, history) con history = train_loss/val_loss/val_acc por epoch.
+    '''Entrena el MLP (Adam + CrossEntropy ponderada por clase, `ReduceLROnPlateau` y early
+    stopping sobre la val loss, restaurando el mejor epoch).
+
+    Args:
+        model: instancia de MLP a entrenar.
+        train_loader: DataLoader de train.
+        val_loader: DataLoader de validación.
+        class_weights: pesos de clase [5] para la CrossEntropy.
+        epochs: techo de epochs.
+        lr: learning rate.
+        patience: epochs sin mejora de val loss antes del early stopping.
+        weight_decay: regularización L2 del optimizador.
+        model_path: ruta de checkpoint (no usada; el mejor epoch se restaura en memoria).
+
+    Returns:
+        Tupla (model entrenado, history) con history = train_loss/val_loss/val_acc por epoch.
     '''
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = model.to(device)
@@ -202,8 +241,16 @@ def train_model(model, train_loader, val_loader, class_weights,
 
 @torch.no_grad()
 def predict(model, loader, device=None):
-    '''Corre el modelo sobre un loader (sin shuffle) y devuelve (y_true, y_pred)
-    como arrays de numpy, en el mismo orden que el loader.'''
+    '''Corre el modelo sobre un loader (sin shuffle) y recolecta predicciones.
+
+    Args:
+        model: modelo entrenado.
+        loader: DataLoader a predecir (sin shuffle).
+        device: dispositivo de cómputo; si es None se elige cuda/cpu automáticamente.
+
+    Returns:
+        Tupla (y_true, y_pred) como arrays de numpy, en el mismo orden que el loader.
+    '''
     device = device or torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = model.to(device).eval()
     ys, preds = [], []
@@ -213,16 +260,24 @@ def predict(model, loader, device=None):
         ys.append(y_batch.numpy())
     return np.concatenate(ys), np.concatenate(preds)
 
-
 @torch.no_grad()
 def permutation_importance(model, csv_path=None, n_repeats=3, top=15,
                            random_state=42, device=None):
-    '''
-    Importancia de features por PERMUTACIÓN sobre el test: baraja cada feature y
-    mide cuánto cae el Cohen's Kappa (caída grande = feature importante). Es el
-    análogo neuronal del feature importance del XGBoost. Reproduce el mismo split
-    y preprocesamiento que `get_dataloaders`. Devuelve [(feature, importancia)]
-    ordenado de mayor a menor (top N).
+    '''Importancia de features por PERMUTACIÓN sobre el test: baraja cada feature y mide
+    cuánto cae el Cohen's Kappa (caída grande = feature importante). Es el análogo neuronal
+    del feature importance del XGBoost; reproduce el mismo split y preprocesamiento que
+    `get_dataloaders`.
+
+    Args:
+        model: modelo entrenado.
+        csv_path: ruta al epoch_features.csv; si es None, lo busca en data_extraction/ y data/.
+        n_repeats: repeticiones de la permutación por feature (se promedian).
+        top: cantidad de features a devolver.
+        random_state: semilla del split y de la permutación.
+        device: dispositivo de cómputo; si es None se elige cuda/cpu automáticamente.
+
+    Returns:
+        Lista [(feature, importancia)] ordenada de mayor a menor (top N).
     '''
     if csv_path is None:
         candidates = ['../data_extraction/epoch_features.csv', '../data/epoch_features.csv']

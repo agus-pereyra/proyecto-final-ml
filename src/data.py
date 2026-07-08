@@ -49,20 +49,34 @@ STAGES_LABELS = {
 }
 
 class EDA:
-    '''
-    Métodos estáticos para el análisis exploratorio y el procesamiento de los
-    datos: carga por noche, reporte de calidad, ventana válida y resolución de
-    gaps internos. No mantiene estado; cada método opera sobre los archivos del
-    dataset (leídos, nunca escritos) o sobre el `quality_report.json` derivado.
+    '''Métodos estáticos para el análisis exploratorio y el procesamiento de los datos. No
+    mantiene estado; cada método opera sobre los archivos del dataset (leídos, nunca escritos)
+    o sobre el `quality_report.json` derivado.
+
+    Métodos:
+        load_night: carga una noche cruda (hr, motion, labels, recStart).
+        load_night_clean: carga una noche recortada a su ventana válida.
+        valid_windows: {(patient, night): (valid_start_s, valid_end_s)} desde el quality report.
+        quality_report: analiza todas las noches y escribe quality_report.json.
+        problematic_nights: lista y guarda las noches que requieren modificación.
+        internal_gap_resolution: decide trim_tail/discard por noche con gap interno.
+        class_distribution: conteo de épocas por etapa (expert y dreem).
+        label_length_mismatch: noches donde expert y dreem difieren en largo.
+        all_labels: concatena las etiquetas expert/dreem de todas las noches.
+        plot_motion_comparison_3d: scatter 3D interactivo de la acelerometría por etapa.
     '''
     @staticmethod
     def load_night(patient: int, night: int):
-        '''
-        Carga una noche cruda (sin recortar a la ventana válida), filtrando filas
-        con timestamps corruptos (<=1e9).
-        In:  patient, night.
-        Out: (hr, motion, dreem_labels, expert_labels, rec_start); rec_start en
-             hora local America/New_York.
+        '''Carga una noche cruda (sin recortar a la ventana válida), filtrando filas con
+        timestamps corruptos (<=1e9).
+
+        Args:
+            patient: número de paciente.
+            night: número de noche.
+
+        Returns:
+            Tupla (hr, motion, dreem_labels, expert_labels, rec_start); rec_start en hora
+            local America/New_York.
         '''
         path = DATA_PATH / f'Bidslab{patient:02d}' / f'{night}'
         hr = pd.read_csv(path / 'hr.csv', header=None, names=['Timestamp', 'hr'])
@@ -88,12 +102,15 @@ class EDA:
 
     @staticmethod
     def valid_windows(report_path: Path = None):
-        '''
-        Lee el `quality_report.json` y devuelve un dict
-        {(patient, night): (valid_start_s, valid_end_s)} con la ventana
-        válida de cada noche (intersección señal/labels ya calculada por
-        `quality_report`). Es la fuente de verdad del recorte en memoria;
-        tanto la extracción de features como el armado de secuencias la usan.
+        '''Devuelve la ventana válida de cada noche (intersección señal/labels ya calculada
+        por `quality_report`). Es la fuente de verdad del recorte en memoria; tanto la
+        extracción de features como el armado de secuencias la usan.
+
+        Args:
+            report_path: ruta al quality_report.json; por defecto analysis/quality_report.json.
+
+        Returns:
+            Dict {(patient, night): (valid_start_s, valid_end_s)} en segundos Unix.
         '''
         if report_path is None:
             report_path = ANALYSIS_DIR / 'quality_report.json'
@@ -105,17 +122,21 @@ class EDA:
     @staticmethod
     def load_night_clean(patient: int, night: int,
                          valid_start: float = None, valid_end: float = None):
-        '''
-        Carga una noche y la recorta en memoria a su ventana válida, sin
-        tocar los archivos. `valid_start`/`valid_end` deberían venir de
-        `valid_windows()` (quality_report); si se omiten, se usa la
-        intersección simple entre la ventana etiquetada y el rango de hr.
+        '''Carga una noche y la recorta en memoria a su ventana válida, sin tocar los
+        archivos: recorta hr y motion a [valid_start, valid_end) y las labels a las epochs
+        cuyo inicio cae dentro de esa ventana.
 
-        Recorta hr y motion a [valid_start, valid_end) y las labels a las
-        epochs cuyo inicio cae dentro de esa ventana, devolviendo además el
-        timestamp de inicio de la primera epoch conservada (ya alineado).
+        Args:
+            patient: número de paciente.
+            night: número de noche.
+            valid_start: inicio de la ventana válida [s]; suele venir de valid_windows().
+                Si es None, se usa max(recStart, primer sample de hr).
+            valid_end: fin de la ventana válida [s]; suele venir de valid_windows().
+                Si es None, se usa min(fin etiquetado, último sample de hr).
 
-        Devuelve (hr, motion, dreem, expert, aligned_start).
+        Returns:
+            Tupla (hr, motion, dreem, expert, aligned_start), donde aligned_start es el
+            timestamp de inicio de la primera epoch conservada (ya alineado).
         '''
         hr, motion, dreem, expert, rec_start = EDA.load_night(patient, night)
         start = pd.Timestamp(str(rec_start), tz='America/New_York').timestamp()
@@ -138,11 +159,13 @@ class EDA:
 
     @staticmethod
     def class_distribution():
-        '''
-        Cuenta las épocas de cada etapa (0..5) sobre todas las noches, para
-        experto y Dreem.
-        In:  (nada).
-        Out: {'expert': array[6], 'dreem': array[6]} (conteos por clase).
+        '''Cuenta las épocas de cada etapa (0..5) sobre todas las noches, para experto y Dreem.
+
+        Args:
+            (ninguno).
+
+        Returns:
+            Dict {'expert': array[6], 'dreem': array[6]} con los conteos por clase.
         '''
         expert_counts = np.zeros(6, dtype=int)
         dreem_counts = np.zeros(6, dtype=int)
@@ -164,13 +187,16 @@ class EDA:
 
     @staticmethod
     def label_length_mismatch():
-        '''
-        Compara la cantidad de epochs etiquetadas por expert_label y
-        dreem_label en cada noche. La ventana válida del test de calidad
-        se define con expert_label, así que verificamos en qué noches
-        ambos etiquetados difieren en extensión temporal.
+        '''Compara la cantidad de epochs etiquetadas por expert_label y dreem_label en cada
+        noche. La ventana válida del test de calidad se define con expert_label, así que se
+        verifica en qué noches ambos etiquetados difieren en extensión temporal.
 
-        Devuelve una lista de dicts (una por noche con discrepancia).
+        Args:
+            (ninguno).
+
+        Returns:
+            Lista de dicts (una por noche con discrepancia) con patient, night, n_expert,
+            n_dreem, diff_epochs y diff_s.
         '''
         mismatches = []
         for patient in PATIENCE_NUMBERS:
@@ -195,11 +221,14 @@ class EDA:
 
     @staticmethod
     def all_labels():
-        '''
-        Concatena las etiquetas de expert y dreem de todas las noches (recortando
-        cada una al largo común de ambos, que en 2 noches difieren).
-        In:  (nada).
-        Out: (expert, dreem), dos arrays 1D alineados época a época.
+        '''Concatena las etiquetas de expert y dreem de todas las noches (recortando cada una
+        al largo común de ambos, que en 2 noches difieren).
+
+        Args:
+            (ninguno).
+
+        Returns:
+            Tupla (expert, dreem), dos arrays 1D alineados época a época.
         '''
         expert_labels = []
         dreem_labels = []
@@ -225,15 +254,20 @@ class EDA:
     def quality_report(gap_threshold: float = 60.0, acc_tol: float = 0.5,
                         ihr_max: float = 200.0, edge_trim: int = 10,
                         save_path: Path = None):
-        '''
-        Recorre todas las noches de todos los pacientes y registra,
-        por cada una, gaps temporales en hr/motion, cobertura de las
-        labels respecto a la duración total del registro, y muestras
-        de acelerometría/IHR con valores potencialmente inválidos.
+        '''Recorre todas las noches de todos los pacientes y registra, por cada una, gaps
+        temporales en hr/motion, cobertura de las labels respecto a la duración total del
+        registro, y muestras de acelerometría/IHR con valores potencialmente inválidos.
 
-        In:  gap_threshold, acc_tol, ihr_max, edge_trim, save_path (todos opc.).
-        Out: nada; escribe `analysis/quality_report.json` con un registro por noche
-             (ventana válida, gaps, coberturas, conteos de inválidos, etc.).
+        Args:
+            gap_threshold: Δt [s] a partir del cual se detecta un gap temporal.
+            acc_tol: tolerancia de |‖a‖-1| [g] para marcar acelerometría inválida.
+            ihr_max: IHR [bpm] por encima del cual se marca inválido.
+            edge_trim: nº de muestras de borde a ignorar al contar IHR inválido.
+            save_path: destino del JSON; por defecto analysis/quality_report.json.
+
+        Returns:
+            None. Escribe el quality_report.json con un registro por noche (ventana válida,
+            gaps, coberturas, conteos de inválidos, etc.).
         '''
         nights = []
         for patient in PATIENCE_NUMBERS:
@@ -399,25 +433,25 @@ class EDA:
     def problematic_nights(quality_df: pd.DataFrame,
                            align_tol: float = ALIGN_TOL_S,
                            internal_gap_threshold: float = INTERNAL_GAP_THRESHOLD_S):
-        '''
-        A partir del DataFrame devuelto por `quality_report`, lista todas las
-        noches que requieren alguna modificación al construir el dataset y deja
-        el registro en `analysis/problematic_nights.json`. Sólo las noches ya
-        alineadas (señal y labels sobre el mismo período, dentro de `align_tol`)
-        quedan fuera.
+        '''A partir del DataFrame devuelto por `quality_report`, lista todas las noches que
+        requieren alguna modificación al construir el dataset y deja el registro en
+        `analysis/problematic_nights.json`. Sólo las noches ya alineadas (señal y labels sobre
+        el mismo período, dentro de `align_tol`) quedan fuera. Cada noche se etiqueta con las
+        modificaciones que necesita: `signal_excess` (señal fuera de la ventana etiquetada →
+        recortar la señal), `label_trunc` (labels sin señal al inicio/fin → recortar las
+        labels) e `internal_gap` (gaps de señal dentro de la ventana válida → descartar o
+        reparar). Todo se aplica en memoria, sin tocar los archivos.
 
-        Cada noche se etiqueta con las modificaciones que necesita:
-        - `signal_excess`: hay señal fuera de la ventana etiquetada
-          (`head_excess_s`/`tail_excess_s`). Solución: recortar la señal.
-        - `label_trunc`: hay labels sin señal al inicio/fin
-          (`leading_trunc_s`/`trailing_trunc_s`). Solución: recortar las labels.
-        - `internal_gap`: hay gaps de señal dentro de la ventana válida
-          (`internal_gap_s > internal_gap_threshold`). Solución: descartar o
-          reparar la noche (se decide al construir el dataset).
+        Args:
+            quality_df: DataFrame devuelto por quality_report.
+            align_tol: tolerancia [s] por debajo de la cual señal y labels se consideran
+                alineados (no se lista la noche).
+            internal_gap_threshold: gap interno acumulado [s] a partir del cual se marca
+                internal_gap.
 
-        Todas las modificaciones se aplican en memoria, sin tocar los archivos.
-
-        Devuelve la lista de dicts (una por noche modificada).
+        Returns:
+            Lista de dicts (una por noche modificada) con los tiempos de truncamiento/exceso,
+            el gap interno, la ventana válida y las modificaciones. Escribe además el JSON.
         '''
         q = quality_df.copy()
         if 'motion_internal_gap_s' not in q.columns:
@@ -492,30 +526,26 @@ class EDA:
     def internal_gap_resolution(quality_df: pd.DataFrame = None,
                                 internal_gap_threshold: float = INTERNAL_GAP_THRESHOLD_S,
                                 min_clean_prefix_frac: float = MIN_CLEAN_PREFIX_FRAC):
-        '''
-        Decide cómo tratar cada noche con gaps internos (`internal_gap_s >
-        internal_gap_threshold`) según DÓNDE caen las epochs sin cobertura de hr
-        dentro de su ventana válida. Una epoch está "cubierta" si su ventana de
-        30 s contiene al menos un sample de hr.
+        '''Decide cómo tratar cada noche con gaps internos (`internal_gap_s >
+        internal_gap_threshold`) según DÓNDE caen las epochs sin cobertura de hr dentro de su
+        ventana válida (una epoch está "cubierta" si su ventana de 30 s contiene al menos un
+        sample de hr). `trim_tail`: las epochs sin cobertura están agrupadas al final y el
+        prefijo contiguo cubierto abarca >= `min_clean_prefix_frac` de la noche → se conserva
+        ese prefijo y se descarta la cola recortando `valid_end`. `discard`: los gaps son
+        interiores/dispersos → se descarta la noche entera (un hueco en el medio rompe la
+        continuidad temporal). No se colapsan los gaps (son dropouts reales de medición y
+        colapsar el tiempo desalinearía las labels, ancladas a tiempo absoluto).
 
-        - `trim_tail`: las epochs sin cobertura están agrupadas al final. El
-          prefijo contiguo cubierto `[valid_start, valid_start + first_gap)`
-          abarca >= `min_clean_prefix_frac` de la noche; se conserva ese prefijo
-          (100% cubierto, sin huecos internos → apto para secuencias) y se
-          descarta la cola recortando `valid_end` a `new_valid_end`.
-        - `discard`: los gaps son interiores o dispersos (el prefijo limpio es
-          menor a `min_clean_prefix_frac`). Un hueco en el medio rompe la
-          continuidad temporal (perjudicial para modelos secuenciales tipo
-          LSTM), por lo que la noche se descarta entera.
+        Args:
+            quality_df: DataFrame de quality_report; si es None se lee de quality_report.json.
+            internal_gap_threshold: gap interno acumulado [s] a partir del cual se procesa la
+                noche.
+            min_clean_prefix_frac: fracción mínima de prefijo contiguo cubierto para recortar
+                la cola (trim_tail) en vez de descartar.
 
-        No se colapsan los gaps: el diagnóstico muestra que no son artefactos de
-        timestamps sino dropouts reales de medición (saltos de hasta ~60 bpm a
-        través del hueco), y colapsar el tiempo desalinearía las labels (ancladas
-        a tiempo absoluto, 30 s por epoch).
-
-        Si `quality_df` es None se lee de `quality_report.json`. Devuelve
-        `{(patient, night): {'action', 'new_valid_end', 'clean_prefix_frac',
-        'n_uncovered', 'n_epochs'}}`.
+        Returns:
+            Dict {(patient, night): {'action', 'new_valid_end', 'clean_prefix_frac',
+            'n_uncovered', 'n_epochs'}}.
         '''
         if quality_df is None:
             with open(ANALYSIS_DIR / 'quality_report.json', encoding='utf-8') as f:
@@ -555,11 +585,16 @@ class EDA:
 
     @staticmethod
     def plot_motion_comparison_3d(patient: int, night: int, step: int = 1000):
-        '''
-        Scatter 3D interactivo (plotly) de la acelerometría (x, y, z) de una
-        noche, coloreada por etapa, en dos paneles: etiquetas del experto vs.
-        Dreem. `step` submuestrea las filas para aligerar el render. Muestra la
-        figura; no devuelve nada.
+        '''Scatter 3D interactivo (plotly) de la acelerometría (x, y, z) de una noche,
+        coloreada por etapa, en dos paneles: etiquetas del experto vs. Dreem.
+
+        Args:
+            patient: número de paciente.
+            night: número de noche.
+            step: submuestreo de filas para aligerar el render (1 = sin submuestrear).
+
+        Returns:
+            None. Muestra la figura de plotly.
         '''
         # 1. Cargar datos
         path = DATA_PATH / f'Bidslab{patient:02d}' / f'{night}'
@@ -622,7 +657,16 @@ class EDA:
         fig.show()
 
 class DataSet(torch.utils.data.Dataset):
-    '''Sirve épocas desde un manifiesto de tuplas (path, epoch_idx, label).'''
+    '''Dataset de PyTorch que sirve épocas desde un manifiesto de tuplas (path, epoch_idx,
+    label), cargando cada `.npz` con mmap al vuelo.
+
+    Atributos:
+        manifest: lista de tuplas (path, epoch_idx, label).
+
+    Métodos:
+        __len__: cantidad de épocas del manifiesto.
+        __getitem__: devuelve (tensor float32 de la época, label).
+    '''
     def __init__(self, manifest):
         self.manifest = manifest
 
