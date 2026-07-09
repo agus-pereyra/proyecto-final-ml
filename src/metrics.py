@@ -51,6 +51,28 @@ def print_metrics(y_true, y_pred, class_names=None, name=''):
     print(f"Accuracy:       {accuracy_score(y_true, y_pred):.4f}")
 
 
+def _draw_confusion(cm, class_names, title, normalize, ax=None, figsize=(6, 5),
+                    fontsize_scale=1.0, show_title=True):
+    '''Dibuja una matriz de confusión ya calculada. `fontsize_scale` escala TODAS las
+    fuentes (números internos de cada celda incluidos); `show_title` controla el título.
+    Devuelve (fig, ax).'''
+    disp = ConfusionMatrixDisplay(cm, display_labels=class_names)
+    if ax is None:
+        fig, ax = plt.subplots(figsize=figsize)
+    else:
+        fig = ax.figure
+    disp.plot(ax=ax, cmap='Blues', colorbar=False,
+              values_format='.2f' if normalize else 'd',
+              text_kw={'fontsize': 13 * fontsize_scale})   # números dentro de cada bloque
+    if show_title:
+        ax.set_title(title, fontsize=12 * fontsize_scale)
+    ax.set_ylabel('expert label', fontsize=12 * fontsize_scale)
+    ax.set_xlabel('predicted label', fontsize=12 * fontsize_scale)
+    ax.tick_params(axis='both', labelsize=11 * fontsize_scale)
+    fig.tight_layout()
+    return fig, ax
+
+
 def plot_confusion(y_true, y_pred, class_names=None, title='Matriz de confusión',
                    normalize=False, ax=None, figsize=(6, 5), save=False):
     '''
@@ -59,8 +81,9 @@ def plot_confusion(y_true, y_pred, class_names=None, title='Matriz de confusión
     In:  y_true, y_pred [N]; class_names, title, normalize, ax opcionales.
          save: guarda el PNG en report/figures/ (igual que plots.py). True -> nombre
          derivado del título; str -> ese nombre de archivo (sin extensión). Ignorado si
-         se pasa un `ax` externo.
-    Out: (fig, ax).
+         se pasa un `ax` externo. La versión guardada se dibuja más chica y con fuentes
+         más grandes (números de cada celda incluidos), conservando el título del ax.
+    Out: (fig, ax) de la figura mostrada.
     '''
     y_true = np.asarray(y_true)
     y_pred = np.asarray(y_pred)
@@ -68,23 +91,17 @@ def plot_confusion(y_true, y_pred, class_names=None, title='Matriz de confusión
     labels = list(range(len(class_names)))
     cm = confusion_matrix(y_true, y_pred, labels=labels,
                           normalize='true' if normalize else None)
-    disp = ConfusionMatrixDisplay(cm, display_labels=class_names)
-    ax_was_none = ax is None
-    if ax_was_none:
-        fig, ax = plt.subplots(figsize=figsize)
-    else:
-        fig = ax.figure
-    disp.plot(ax=ax, cmap='Blues', colorbar=False,
-              values_format='.2f' if normalize else 'd')
-    ax.set_title(title)
-    fig.tight_layout()
-    ax.set_ylabel('expert label')
-    ax.set_xlabel('predicted label')
-    if save and ax_was_none:
+
+    if save and ax is None:
         name = save if isinstance(save, str) else _slugify(title)
         FIG_DIR.mkdir(parents=True, exist_ok=True)
-        fig.savefig(FIG_DIR / f'{name}.png', dpi=200, bbox_inches='tight')
-    return fig, ax
+        save_fig, _ = _draw_confusion(cm, class_names, title, normalize,
+                                      figsize=(4.6, 3.9), fontsize_scale=1.2,
+                                      show_title=True)
+        save_fig.savefig(FIG_DIR / f'{name}.png', dpi=200, bbox_inches='tight')
+        plt.close(save_fig)
+
+    return _draw_confusion(cm, class_names, title, normalize, ax=ax, figsize=figsize)
 
 def cohen_kappa_per_class(y_true, y_pred, n_classes=6):
     '''

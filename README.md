@@ -31,7 +31,7 @@ data/
     └── ...
 ```
 
-3) Instalación de requisitos
+2) Instalación de requisitos
 
 Crear un entorno con conda:
 ```bash
